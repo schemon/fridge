@@ -42,7 +42,12 @@ if [ ! -d "$SRC_DIR" ]; then
 fi
 
 FILES=("$SRC_DIR"/*)
-if [ ${#FILES[@]} -eq 0 ]; then
+# filter regular files only
+REG_FILES=()
+for f in "${FILES[@]}"; do
+  [ -f "$f" ] && REG_FILES+=("$f")
+done
+if [ ${#REG_FILES[@]} -eq 0 ]; then
   echo "No files found in $SRC_DIR" >&2
   exit 1
 fi
@@ -57,8 +62,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 echo "Copying scripts from $SRC_DIR..." >&2
-for f in "${FILES[@]}"; do
-  [ -f "$f" ] || continue
+for f in "${REG_FILES[@]}"; do
   base=$(basename "$f")
   echo " - $base" >&2
   if [ "$DRY_RUN" -eq 0 ]; then

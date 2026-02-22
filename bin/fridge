@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# fridge CLI
+#
+# A thin wrapper around the scripts in ./bin and versioned Pi scripts in ./rpi.
+#
+# Usage:
+#   ./bin/fridge <command> [args]
+#
+# Commands:
+#   vid clip [seconds] [session_id]          Record on Pi, wait N seconds, stop, fetch
+#   vid start [session_id]                  Start recording on Pi (prints remote session dir)
+#   vid stop [remote_session_dir]          Stop recording on Pi (prints session + remote file path)
+#   vid fetch <remote_file_path>            Fetch a remote mp4/h264 to local captures/
+#   vid analyze [--step-ms 100]             Analyze first pending session on Pi (dummy AI)
+#
+#   sessions list [--limit N] [--json]       List pending sessions (oldest first)
+#
+#   frames extract <input.mp4> [options]     Deterministic frame extraction (default 100ms)
+#
+#   tx list [--limit N] [--pretty]          List transactions (newest first)
+#   reset [--what analysis|tx] [--apply]     Reset derived analysis state in sessions/ (Pi)
+#
+#   rpi deploy [--dry-run] [--host H] [--user U] [--dest D]
+#
+# Env vars:
+#   FRIDGE_PI_HOST, FRIDGE_PI_USER, FRIDGE_PI_BIN
+#
+# --- end help ---
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ---------------------- helpers ----------------------
+die() { echo "fridge: $*" >&2; exit 2; }
+
+run() {
+  # prints command to stderr when FRIDGE_DEBUG is set
+  if [ "${FRIDGE_DEBUG:-0}" != "0" ]; then
+    echo "+ $*" >&2
+  fi
+  "$@"
+}
+
+usage() {
+  awk '
+    /^#!/ { next }
+    /^# --- end help ---/ { exit }
+    /^#/ {
+      sub(/^# ?/, "", $0);
+      print;
+    }
+  ' "$0"
+}
+
+require_script() {
+  local p="$1"
+  [ -x "$p" ] || die "missing executable: $p"
+}
+
+# ---------------------- commands ----------------------
+cmd=${1:-""}
+[ -n "$cmd" ] || { usage; exit 0; }
+shift || true
+
+case "$cmd" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+
+  vid)
+    sub=${1:-""}; shift || true
+    case "$sub" in
+      clip)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge vid clip [seconds] [session_id]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-vid-clip"
+        run "$ROOT_DIR/bin/fridge-vid-clip" "$@"
+        ;;
+      start)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge vid start [session_id]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-vid-start-remote"
+        run "$ROOT_DIR/bin/fridge-vid-start-remote" "$@"
+        ;;
+      stop)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge vid stop [remote_session_dir]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-vid-stop-remote"
+        run "$ROOT_DIR/bin/fridge-vid-stop-remote" "$@"
+        ;;
+      fetch)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge vid fetch <remote_file_path>" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-vid-fetch"
+        run "$ROOT_DIR/bin/fridge-vid-fetch" "$@"
+        ;;
+      analyze)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge vid analyze [--step-ms 100]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-vid-analyze-remote"
+        run "$ROOT_DIR/bin/fridge-vid-analyze-remote" "$@"
+        ;;
+      "")
+        die "missing subcommand: vid <clip|start|stop|fetch>"
+        ;;
+      *)
+        die "unknown vid subcommand: $sub"
+        ;;
+    esac
+    ;;
+
+  sessions)
+    sub=${1:-""}; shift || true
+    case "$sub" in
+      list)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge sessions list [--limit N] [--json]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-sessions-list-remote"
+        run "$ROOT_DIR/bin/fridge-sessions-list-remote" "$@"
+        ;;
+      "")
+        die "missing subcommand: sessions <list>"
+        ;;
+      *)
+        die "unknown sessions subcommand: $sub"
+        ;;
+    esac
+    ;;
+
+  frames)
+    sub=${1:-""}; shift || true
+    case "$sub" in
+      extract)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge frames extract <input.mp4> [--step-ms 100] [--duration-s S] [--start-s 0] [--format png|jpg]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-frames-deterministic"
+        if [ $# -ge 1 ]; then
+          run "$ROOT_DIR/bin/fridge-frames-deterministic" "$1" "${@:2}"
+        else
+          die "Usage: ./bin/fridge frames extract <input.mp4> [--step-ms 100] [--duration-s S] [--format png]"
+        fi
+        ;;
+      "")
+        die "missing subcommand: frames <extract>"
+        ;;
+      *)
+        die "unknown frames subcommand: $sub"
+        ;;
+    esac
+    ;;
+
+  tx)
+    sub=${1:-""}; shift || true
+    case "$sub" in
+      list)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge tx list [--limit N] [--pretty] [--session ID]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-tx-list-remote"
+        run "$ROOT_DIR/bin/fridge-tx-list-remote" "$@"
+        ;;
+      "")
+        die "missing subcommand: tx <list>"
+        ;;
+      *)
+        die "unknown tx subcommand: $sub"
+        ;;
+    esac
+    ;;
+
+  reset)
+    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+      echo "Usage: ./bin/fridge reset [--what analysis|tx] [--apply] [--limit N]" >&2
+      exit 0
+    fi
+    require_script "$ROOT_DIR/bin/fridge-reset-remote"
+    run "$ROOT_DIR/bin/fridge-reset-remote" "$@"
+    ;;
+
+  rpi)
+    sub=${1:-""}; shift || true
+    case "$sub" in
+      deploy)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+          echo "Usage: ./bin/fridge rpi deploy [--dry-run] [--host H] [--user U] [--dest D]" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-rpi-deploy"
+        run "$ROOT_DIR/bin/fridge-rpi-deploy" "$@"
+        ;;
+      "")
+        die "missing subcommand: rpi <deploy>"
+        ;;
+      *)
+        die "unknown rpi subcommand: $sub"
+        ;;
+    esac
+    ;;
+
+  *)
+    die "unknown command: $cmd (try: ./bin/fridge help)"
+    ;;
+esac

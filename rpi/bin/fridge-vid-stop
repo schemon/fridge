@@ -3,7 +3,15 @@ set -euo pipefail
 
 SESSION_DIR=${1:-""}
 if [ -z "$SESSION_DIR" ]; then
-  echo "Usage: fridge-vid-stop <session_dir>" >&2
+  CURRENT_FILE="$HOME/fridge-captures/current_session"
+  if [ -f "$CURRENT_FILE" ]; then
+    SESSION_DIR=$(cat "$CURRENT_FILE")
+  fi
+fi
+
+if [ -z "$SESSION_DIR" ]; then
+  echo "Usage: fridge-vid-stop [session_dir]" >&2
+  echo "(No session_dir provided and $HOME/fridge-captures/current_session not found)" >&2
   exit 2
 fi
 

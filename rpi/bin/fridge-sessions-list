@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# List pending sessions on the Pi (sessions/), oldest first.
+#
+# Usage:
+#   fridge-sessions-list [--limit N] [--json]
+
+HOME_CAP="$HOME/fridge-captures"
+SESSIONS_DIR="$HOME_CAP/sessions"
+
+LIMIT=0
+JSON=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --limit) LIMIT=${2:-0}; shift 2;;
+    --json) JSON=1; shift;;
+    -h|--help)
+      sed -n '1,140p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
+  echo "--limit must be an integer" >&2
+  exit 2
+fi
+
+python3 - <<'PY'
+import os, glob, json, subprocess, sys
+
+sessions_dir=os.path.expanduser('~/fridge-captures/sessions')
+limit=int(os.environ.get('LIMIT','0') or '0')
+json_out=int(os.environ.get('JSON','0') or '0')
+
+sess=sorted([d for d in glob.glob(os.path.join(sessions_dir,'*')) if os.path.isdir(d)])
+
+rows=[]
+for d in sess:
+    sid=os.path.basename(d)
+    mp4=os.path.join(d,'clip.mp4')
+    h264=os.path.join(d,'clip.h264')
+    status=os.path.join(d,'analysis','status.json')
+    dur=None
+    if os.path.exists(mp4):
+        try:
+            dur_str=subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',mp4], text=True).strip().splitlines()[0]
+            dur=float(dur_str)
+        except Exception:
+            dur=None
+    row={
+        'session_id': sid,
+        'path': d,
+        'has_mp4': os.path.exists(mp4),
+        'has_h264': os.path.exists(h264),
+        'duration_s': dur,
+        'has_status': os.path.exists(status),
+    }
+    rows.append(row)
+
+if limit:
+    rows=rows[:limit]
+
+if json_out:
+    print(json.dumps(rows, ensure_ascii=False, indent=2))
+else:
+    for r in rows:
+        dur = (f"{r['duration_s']:.3f}s" if isinstance(r['duration_s'], (int,float)) else "?")
+        flags=[]
+        if r['has_mp4']: flags.append('mp4')
+        if r['has_h264']: flags.append('h264')
+        if r['has_status']: flags.append('status')
+        fstr=','.join(flags) if flags else '-'
+        print(f"{r['session_id']}  dur={dur}  {fstr}")
+PY

@@ -6,6 +6,10 @@ SESSION_ID=${1:-"$TS"}
 OUTDIR="$HOME/fridge-captures/sessions/$SESSION_ID"
 mkdir -p "$OUTDIR"
 
+# Track the most recent session for argument-less stop.
+CURRENT_FILE="$HOME/fridge-captures/current_session"
+echo "$OUTDIR" > "$CURRENT_FILE"
+
 WIDTH=${WIDTH:-2304}
 HEIGHT=${HEIGHT:-1296}
 FRAMERATE=${FRAMERATE:-30}

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reset derived analysis state in sessions/ (standalone on Pi).
+#
+# By default: dry-run (prints what would be removed).
+#
+# Usage:
+#   fridge-reset [--what analysis|tx] [--apply] [--limit N]
+#
+# Options:
+#   --what analysis   Remove sessions/*/analysis/ (frames + status + transactions). (default)
+#   --what tx         Remove only transactions/status in sessions/*/analysis/ (keep frames)
+#   --apply           Actually delete (otherwise dry-run)
+#   --limit N         Only operate on the first N sessions (sorted)
+#
+# Safety:
+#   Never touches history/.
+
+HOME_CAP="$HOME/fridge-captures"
+SESSIONS_DIR="$HOME_CAP/sessions"
+
+WHAT="analysis"
+APPLY=0
+LIMIT=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --what) WHAT=${2:-""}; shift 2;;
+    --apply|--yes) APPLY=1; shift;;
+    --limit) LIMIT=${2:-0}; shift 2;;
+    -h|--help)
+      sed -n '1,160p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ "$WHAT" != "analysis" ] && [ "$WHAT" != "tx" ]; then
+  echo "--what must be analysis|tx (got: $WHAT)" >&2
+  exit 2
+fi
+
+if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
+  echo "--limit must be an integer (got: $LIMIT)" >&2
+  exit 2
+fi
+
+if [ ! -d "$SESSIONS_DIR" ]; then
+  echo "No sessions dir: $SESSIONS_DIR" >&2
+  exit 0
+fi
+
+# Collect session dirs deterministically
+mapfile -t SESS < <(ls -1d "$SESSIONS_DIR"/* 2>/dev/null | sort || true)
+if [ ${#SESS[@]} -eq 0 ]; then
+  echo "No sessions found in $SESSIONS_DIR" >&2
+  exit 0
+fi
+
+n=0
+for d in "${SESS[@]}"; do
+  [ -d "$d" ] || continue
+  if [ "$LIMIT" -ne 0 ] && [ "$n" -ge "$LIMIT" ]; then
+    break
+  fi
+  n=$((n+1))
+
+  if [ "$WHAT" = "analysis" ]; then
+    target="$d/analysis"
+    if [ -d "$target" ]; then
+      echo "RM -rf $target"
+      if [ "$APPLY" -eq 1 ]; then
+        rm -rf "$target"
+      fi
+    fi
+  else
+    # tx: remove only transactions + status (keep frames)
+    tx="$d/analysis/transactions.jsonl"
+    st="$d/analysis/status.json"
+    if [ -f "$tx" ]; then
+      echo "RM $tx"
+      if [ "$APPLY" -eq 1 ]; then rm -f "$tx"; fi
+    fi
+    if [ -f "$st" ]; then
+      echo "RM $st"
+      if [ "$APPLY" -eq 1 ]; then rm -f "$st"; fi
+    fi
+  fi
+
+done
+
+if [ "$APPLY" -eq 0 ]; then
+  echo "(dry-run) add --apply to actually delete" >&2
+fi

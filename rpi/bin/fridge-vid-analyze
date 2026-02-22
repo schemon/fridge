@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Analyze the first pending fridge video session on the Raspberry Pi.
+#
+# Workflow (standalone on Pi):
+# - Find first session dir in ~/fridge-captures/sessions/
+# - Extract deterministic frames every STEP_MS into analysis/frames/
+# - Run dummy "AI" (placeholder) to produce transactions.jsonl
+# - Mark status.json
+# - Move session dir to ~/fridge-captures/history/
+#
+# Usage:
+#   fridge-vid-analyze [--step-ms 100] [--duration-s 5] [--keep-existing]
+#
+# Env:
+#   STEP_MS (default 100)
+#   DURATION_S (default 5)
+
+HOME_CAP="$HOME/fridge-captures"
+SESSIONS_DIR="$HOME_CAP/sessions"
+HISTORY_DIR="$HOME_CAP/history"
+
+DATA_DIR="$HOME/fridge-data"
+TX_LOG="$DATA_DIR/transactions.jsonl"
+PROOFS_DIR="$DATA_DIR/proofs"
+
+log() { echo "[analyze] $*" >&2; }
+
+SESSION_ID=""
+SESSION_DIR=""
+STATUS_FILE=""
+FRAME_COUNT="0"
+CURRENT_STEP="init"
+
+move_to_history_failed() {
+  # best-effort move a bad session out of the pending queue
+  local reason="$1"
+  [ -n "${SESSION_DIR:-}" ] || return 0
+  [ -d "${SESSION_DIR:-}" ] || return 0
+
+  local sid
+  sid=$(basename "$SESSION_DIR")
+  local dest="$HISTORY_DIR/${sid}-failed-${reason}-$(date +%Y%m%d-%H%M%S)"
+  log "state=moving_to_history_failed dest=$dest"
+  mv "$SESSION_DIR" "$dest" 2>/dev/null || return 0
+  echo "$dest"
+}
+
+append_failed_tx() {
+  local reason="$1"
+  local ts
+  ts=$(date -Iseconds)
+  mkdir -p "$DATA_DIR" >/dev/null 2>&1 || true
+  touch "$TX_LOG" >/dev/null 2>&1 || true
+
+  local txid
+  txid="${SESSION_ID:-unknown}-failed"
+
+  # Keep it minimal but structured
+  echo '{"tx_id":"'"$txid"'","type":"FAILED","session_id":"'"${SESSION_ID:-unknown}"'","ts":"'"$ts"'","reason":"'"$reason"'","step":"'"${CURRENT_STEP:-unknown}"'","model":"analyze"}' >> "$TX_LOG" 2>/dev/null || true
+}
+
+fail() {
+  local reason="$1"; shift || true
+  local msg="$*"
+  log "state=ERROR reason=$reason step=$CURRENT_STEP ${msg:+msg=}$msg"
+
+  if [ -n "${STATUS_FILE:-}" ]; then
+    TS=$(date -Iseconds)
+    printf '{"state":"failed","reason":"%s","step":"%s","updated_at":"%s"}\n' "$reason" "$CURRENT_STEP" "$TS" > "$STATUS_FILE" || true
+  fi
+
+  append_failed_tx "$reason"
+
+  local moved=""
+  moved=$(move_to_history_failed "$reason" || true)
+
+  echo "status=ERROR"
+  echo "reason=$reason"
+  [ -n "${SESSION_ID:-}" ] && echo "session_id=$SESSION_ID"
+  echo "frames=${FRAME_COUNT:-0}"
+  [ -n "$moved" ] && echo "moved_to=$moved"
+
+  exit 1
+}
+
+on_err() {
+  # generic trap: last command failed
+  local cmd=${BASH_COMMAND:-""}
+  fail "command_failed" "$cmd"
+}
+trap on_err ERR
+
+STEP_MS=${STEP_MS:-100}
+DURATION_S_LIMIT=${DURATION_S:-5}
+KEEP_EXISTING=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --step-ms) STEP_MS=${2:-""}; shift 2;;
+    --duration-s) DURATION_S_LIMIT=${2:-""}; shift 2;;
+    --keep-existing) KEEP_EXISTING=1; shift;;
+    -h|--help)
+      sed -n '1,120p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! [[ "$STEP_MS" =~ ^[0-9]+$ ]] || [ "$STEP_MS" -le 0 ]; then
+  echo "STEP_MS must be a positive integer. Got: $STEP_MS" >&2
+  exit 2
+fi
+
+if ! [[ "$DURATION_S_LIMIT" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "--duration-s must be a number of seconds. Got: $DURATION_S_LIMIT" >&2
+  exit 2
+fi
+
+mkdir -p "$SESSIONS_DIR" "$HISTORY_DIR" "$DATA_DIR" "$PROOFS_DIR"
+log "sessions_dir=$SESSIONS_DIR"
+
+CURRENT_STEP="select_session"
+# Find first pending session (lexicographic order == timestamp order)
+# Prefer sessions that have clip.h264.
+# Avoid directories containing "legacy" unless there's nothing else.
+SESSION_DIR=""
+FALLBACK_LEGACY=""
+
+for d in $(ls -1d "$SESSIONS_DIR"/* 2>/dev/null | sort); do
+  [ -d "$d" ] || continue
+
+  base=$(basename "$d")
+  is_legacy=0
+  echo "$base" | grep -qi legacy && is_legacy=1 || true
+
+  # best: has h264
+  if [ -f "$d/clip.h264" ]; then
+    if [ "$is_legacy" -eq 0 ]; then
+      SESSION_DIR="$d"
+      break
+    else
+      [ -z "$FALLBACK_LEGACY" ] && FALLBACK_LEGACY="$d"
+    fi
+  fi
+
+done
+
+# 3) last resort: legacy h264
+if [ -z "$SESSION_DIR" ] && [ -n "$FALLBACK_LEGACY" ]; then
+  SESSION_DIR="$FALLBACK_LEGACY"
+fi
+
+if [ -z "$SESSION_DIR" ] || [ ! -d "$SESSION_DIR" ]; then
+  echo "No pending sessions in $SESSIONS_DIR" >&2
+  echo "status=DONE"
+  echo "reason=none_pending"
+  exit 0
+fi
+
+SESSION_ID=$(basename "$SESSION_DIR")
+log "selected_session=$SESSION_ID"
+ANALYSIS_DIR="$SESSION_DIR/analysis"
+FRAMES_DIR="$ANALYSIS_DIR/frames"
+STATUS_FILE="$ANALYSIS_DIR/status.json"
+TX_FILE="$ANALYSIS_DIR/transactions.jsonl"
+mkdir -p "$ANALYSIS_DIR"
+
+# Determine input video path (we only analyze raw H.264)
+VIDEO="$SESSION_DIR/clip.h264"
+if [ ! -f "$VIDEO" ]; then
+  CURRENT_STEP="validate_inputs"
+  fail "missing_h264" "no clip.h264"
+fi
+
+# Determine framerate (needed for raw h264; default 30)
+FRAMERATE=30
+if [ -f "$SESSION_DIR/meta.txt" ]; then
+  fr=$(grep -E '^framerate=' "$SESSION_DIR/meta.txt" | tail -n 1 | cut -d= -f2 || true)
+  if [[ "${fr:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    FRAMERATE="$fr"
+  fi
+fi
+
+FFMPEG_TIMEOUT_S=${FFMPEG_TIMEOUT_S:-20}
+log "input_video=$VIDEO framerate=$FRAMERATE ffmpeg_timeout_s=$FFMPEG_TIMEOUT_S"
+mkdir -p "$FRAMES_DIR"
+
+# If already done and not forced, skip
+if [ -f "$STATUS_FILE" ] && [ "$KEEP_EXISTING" -eq 1 ]; then
+  echo "Keeping existing analysis for $SESSION_ID (status exists)" >&2
+else
+  # Write status: frames_extracting
+  TS=$(date -Iseconds)
+  printf '{"state":"frames_extracting","session_id":"%s","step_ms":%s,"updated_at":"%s"}\n' "$SESSION_ID" "$STEP_MS" "$TS" > "$STATUS_FILE"
+  log "state=frames_extracting step_ms=$STEP_MS duration_limit_s=$DURATION_S_LIMIT"
+
+  # Clear previous frames (unless keep-existing)
+  if [ "$KEEP_EXISTING" -eq 0 ]; then
+    rm -f "$FRAMES_DIR"/*.png 2>/dev/null || true
+  fi
+
+  # Duration: for raw h264 we generally trust the configured duration limit.
+  DURATION_S="$DURATION_S_LIMIT"
+  log "effective_duration_s=$DURATION_S"
+  CURRENT_STEP="extract_frames"
+  # Efficient extraction in one ffmpeg pass (avoid N expensive seeks).
+  # We extract at fps = 1000/STEP_MS for the first DURATION_S seconds,
+  # then rename frames to deterministic t_XXXXms.png.
+  export VIDEO FRAMES_DIR STEP_MS DURATION_S FRAMERATE FFMPEG_TIMEOUT_S
+
+  if ! python3 - <<'PY'
+import os, math, subprocess, glob
+
+video=os.environ['VIDEO']
+frames_dir=os.environ['FRAMES_DIR']
+step_ms=int(os.environ['STEP_MS'])
+duration_s=float(os.environ['DURATION_S'])
+framerate=float(os.environ.get('FRAMERATE','30') or '30')
+timeout_s=str(os.environ.get('FFMPEG_TIMEOUT_S','20') or '20')
+
+fps = 1000.0/step_ms
+count=int(math.floor((duration_s*1000.0)/step_ms + 1e-9))
+if count <= 0:
+    raise SystemExit(f"Computed 0 frames. duration_s={duration_s}, step_ms={step_ms}")
+
+tmp_pattern=os.path.join(frames_dir, "frame_%04d.png")
+
+cmd=[
+    'timeout', timeout_s,
+    'ffmpeg','-hide_banner','-loglevel','error','-y',
+    '-r', f"{framerate}",
+    '-i',video,
+    '-t',f"{duration_s:.3f}",
+    '-vf',f"fps={fps}",
+    tmp_pattern
+]
+print(f"[analyze] extracting_frames fps={fps} expected_frames={count} duration_s={duration_s:.3f} timeout_s={timeout_s}", file=os.sys.stderr)
+subprocess.check_call(cmd)
+
+frames=sorted(glob.glob(os.path.join(frames_dir,"frame_*.png")))
+for idx, src in enumerate(frames[:count]):
+    ms = idx*step_ms
+    dst=os.path.join(frames_dir, f"t_{ms:04d}ms.png")
+    os.replace(src,dst)
+
+for src in glob.glob(os.path.join(frames_dir,"frame_*.png")):
+    try:
+        os.remove(src)
+    except FileNotFoundError:
+        pass
+PY
+  then
+    fail "frame_extract_failed" "ffmpeg/python extraction failed (or timed out)"
+  fi
+
+  # Count extracted frames safely (avoid -e failure when glob matches nothing)
+  FRAME_COUNT=$(find "$FRAMES_DIR" -maxdepth 1 -type f -name 't_*ms.png' 2>/dev/null | wc -l | tr -d ' ')
+  log "frames_extracted=$FRAME_COUNT"
+
+  if [ "${FRAME_COUNT:-0}" -le 0 ]; then
+    fail "no_frames_extracted" "ffmpeg produced 0 frames"
+  fi
+
+  TS=$(date -Iseconds)
+  printf '{"state":"frames_done","session_id":"%s","step_ms":%s,"updated_at":"%s","frames":%s}\n' "$SESSION_ID" "$STEP_MS" "$TS" "$FRAME_COUNT" > "$STATUS_FILE"
+
+  # Dummy AI: write plausible-looking transactions
+  log "state=ai_dummy_writing_transactions"
+  TS=$(date -Iseconds)
+  : > "$TX_FILE"
+
+  # Use a deterministic fake item name based on session id
+  FAKE_ITEM_ADD="item_dummy_${SESSION_ID}_A"
+  FAKE_ITEM_REMOVE="item_dummy_${SESSION_ID}_B"
+
+  # Evidence frames (within the session analysis folder)
+  S_E1="analysis/frames/t_1200ms.png"
+  S_E2="analysis/frames/t_2500ms.png"
+  S_E3="analysis/frames/t_3800ms.png"
+
+  TXID_ADD="${SESSION_ID}-add"
+  TXID_REMOVE="${SESSION_ID}-remove"
+
+  # Export proof images to global proofs dir
+  P_ADD_1="$PROOFS_DIR/${TXID_ADD}_t_1200ms.png"
+  P_ADD_2="$PROOFS_DIR/${TXID_ADD}_t_2500ms.png"
+  P_REM_1="$PROOFS_DIR/${TXID_REMOVE}_t_2500ms.png"
+  P_REM_2="$PROOFS_DIR/${TXID_REMOVE}_t_3800ms.png"
+
+  # Best-effort copies (proofs are a convenience; don't fail whole run if missing)
+  cp -f "$SESSION_DIR/$S_E1" "$P_ADD_1" 2>/dev/null || true
+  cp -f "$SESSION_DIR/$S_E2" "$P_ADD_2" 2>/dev/null || true
+  cp -f "$SESSION_DIR/$S_E2" "$P_REM_1" 2>/dev/null || true
+  cp -f "$SESSION_DIR/$S_E3" "$P_REM_2" 2>/dev/null || true
+
+  # Evidence paths stored in transactions (relative to ~/fridge-data)
+  E_ADD_1="proofs/$(basename "$P_ADD_1")"
+  E_ADD_2="proofs/$(basename "$P_ADD_2")"
+  E_REM_1="proofs/$(basename "$P_REM_1")"
+  E_REM_2="proofs/$(basename "$P_REM_2")"
+
+  ADD_LINE='{"tx_id":"'$TXID_ADD'","type":"ADD","session_id":"'$SESSION_ID'","ts":"'$TS'","item":{"label":"'$FAKE_ITEM_ADD'","quantity":1,"unit":"pcs"},"confidence":0.62,"evidence":["'$E_ADD_1'","'$E_ADD_2'"],"model":"dummy"}'
+  REM_LINE='{"tx_id":"'$TXID_REMOVE'","type":"REMOVE","session_id":"'$SESSION_ID'","ts":"'$TS'","item":{"label":"'$FAKE_ITEM_REMOVE'","quantity":1,"unit":"pcs"},"confidence":0.58,"evidence":["'$E_REM_1'","'$E_REM_2'"],"model":"dummy"}'
+
+  echo "$ADD_LINE" >> "$TX_FILE"
+  echo "$REM_LINE" >> "$TX_FILE"
+
+  # Append to global transaction log (source of truth)
+  touch "$TX_LOG"
+  echo "$ADD_LINE" >> "$TX_LOG"
+  echo "$REM_LINE" >> "$TX_LOG"
+
+  TS=$(date -Iseconds)
+  printf '{"state":"done","session_id":"%s","step_ms":%s,"updated_at":"%s"}\n' "$SESSION_ID" "$STEP_MS" "$TS" > "$STATUS_FILE"
+fi
+
+# Move to history (audit trail)
+DEST="$HISTORY_DIR/$SESSION_ID"
+if [ -e "$DEST" ]; then
+  # avoid clobbering
+  DEST="$HISTORY_DIR/${SESSION_ID}-$(date +%Y%m%d-%H%M%S)"
+fi
+
+CURRENT_STEP="move_to_history"
+log "state=moving_to_history dest=$DEST"
+mv "$SESSION_DIR" "$DEST"
+
+# Short, script-friendly summary
+echo "status=DONE"
+echo "reason=ok"
+echo "session_id=$SESSION_ID"
+echo "frames=$FRAME_COUNT"
+echo "moved_to=$DEST"

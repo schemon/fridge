@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# List transactions from analyzed sessions (newest first).
+#
+# Source of truth:
+#   ~/fridge-data/transactions.jsonl
+#
+# Usage:
+#   fridge-tx-list [--limit N] [--pretty] [--only-success]
+#   fridge-tx-list [--session <session_id>]
+
+DATA_DIR="$HOME/fridge-data"
+TX_LOG="$DATA_DIR/transactions.jsonl"
+
+LIMIT=0
+PRETTY=0
+ONLY_SUCCESS=0
+SESSION=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --limit) LIMIT=${2:-0}; shift 2;;
+    --pretty) PRETTY=1; shift;;
+    --only-success) ONLY_SUCCESS=1; shift;;
+    --session) SESSION=${2:-""}; shift 2;;
+    -h|--help)
+      sed -n '1,140p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+export LIMIT PRETTY ONLY_SUCCESS SESSION
+
+python3 - <<'PY'
+import os, json, sys
+
+tx_log=os.path.expanduser('~/fridge-data/transactions.jsonl')
+limit=int(os.environ.get('LIMIT','0') or '0')
+pretty=int(os.environ.get('PRETTY','0') or '0')
+only_success=int(os.environ.get('ONLY_SUCCESS','0') or '0')
+session=os.environ.get('SESSION','')
+
+if not os.path.exists(tx_log):
+    sys.exit(0)
+
+with open(tx_log,'r',encoding='utf-8',errors='ignore') as f:
+    lines=[ln.strip() for ln in f if ln.strip()]
+
+count=0
+for ln in reversed(lines):
+    try:
+        obj=json.loads(ln)
+    except Exception:
+        obj={'_raw':ln}
+
+    if session and obj.get('session_id') != session:
+        continue
+
+    t=obj.get('type')
+    if only_success and t == 'FAILED':
+        continue
+
+    if pretty:
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(obj, ensure_ascii=False))
+
+    count += 1
+    if limit and count >= limit:
+        break
+PY

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+REMOTE_BIN=${FRIDGE_PI_BIN:-/home/sixten/bin}
+
+# Pass through args (e.g. --step-ms 100)
+ssh -o ConnectTimeout=5 "$USER@$HOST" "bash -lc '$REMOTE_BIN/fridge-vid-analyze $*'"

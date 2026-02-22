@@ -14,9 +14,9 @@ Default remote path used by the local wrapper scripts is:
 
 Deploy helper (recommended):
 ```bash
-./bin/fridge-rpi-deploy
+./bin/fridge rpi deploy
 # or
-FRIDGE_PI_HOST=raspberrypi.local FRIDGE_PI_USER=sixten FRIDGE_PI_BIN=/home/sixten/bin ./bin/fridge-rpi-deploy
+FRIDGE_PI_HOST=raspberrypi.local FRIDGE_PI_USER=sixten FRIDGE_PI_BIN=/home/sixten/bin ./bin/fridge rpi deploy
 ```
 
 Manual deploy:
