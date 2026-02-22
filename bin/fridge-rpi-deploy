@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Deploy versioned Raspberry Pi scripts from this repo (rpi/bin) to the Pi.
+#
+# Usage:
+#   ./bin/fridge-rpi-deploy
+#   ./bin/fridge-rpi-deploy --host raspberrypi.local --user sixten --dest /home/sixten/bin
+#   ./bin/fridge-rpi-deploy --dry-run
+#
+# Env vars:
+#   FRIDGE_PI_HOST, FRIDGE_PI_USER, FRIDGE_PI_BIN
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+DEST=${FRIDGE_PI_BIN:-/home/sixten/bin}
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host) HOST=${2:-""}; shift 2;;
+    --user) USER=${2:-""}; shift 2;;
+    --dest|--bin) DEST=${2:-""}; shift 2;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help)
+      sed -n '1,120p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SRC_DIR="$ROOT_DIR/rpi/bin"
+
+if [ ! -d "$SRC_DIR" ]; then
+  echo "Missing $SRC_DIR" >&2
+  exit 1
+fi
+
+FILES=("$SRC_DIR"/*)
+if [ ${#FILES[@]} -eq 0 ]; then
+  echo "No files found in $SRC_DIR" >&2
+  exit 1
+fi
+
+REMOTE="$USER@$HOST"
+
+echo "Deploying to: $REMOTE:$DEST" >&2
+
+echo "Ensuring destination exists..." >&2
+if [ "$DRY_RUN" -eq 0 ]; then
+  ssh -o ConnectTimeout=5 "$REMOTE" "mkdir -p '$DEST'"
+fi
+
+echo "Copying scripts from $SRC_DIR..." >&2
+for f in "${FILES[@]}"; do
+  [ -f "$f" ] || continue
+  base=$(basename "$f")
+  echo " - $base" >&2
+  if [ "$DRY_RUN" -eq 0 ]; then
+    scp -q -O -o ConnectTimeout=10 "$f" "$REMOTE:$DEST/$base"
+  fi
+done
+
+echo "Setting executable bits..." >&2
+if [ "$DRY_RUN" -eq 0 ]; then
+  ssh -o ConnectTimeout=5 "$REMOTE" "chmod +x '$DEST'/*"
+fi
+
+echo "Done." >&2

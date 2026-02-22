@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+REMOTE_BIN=${FRIDGE_PI_BIN:-/home/sixten/bin}
+
+SESSION_DIR=${1:-""}
+if [ -z "$SESSION_DIR" ]; then
+  echo "Usage: $0 <remote_session_dir>" >&2
+  exit 2
+fi
+
+CMD="$REMOTE_BIN/fridge-vid-stop"
+# prints: session_dir + file_path
+ssh -o ConnectTimeout=5 "$USER@$HOST" "bash -lc '$CMD $SESSION_DIR'"

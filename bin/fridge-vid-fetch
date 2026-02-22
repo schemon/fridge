@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+
+REMOTE_FILE=${1:-""}
+if [ -z "$REMOTE_FILE" ]; then
+  echo "Usage: $0 <remote_file_path (mp4 or h264)>" >&2
+  exit 2
+fi
+
+TS=$(date +%Y%m%d-%H%M%S)
+OUTDIR="$(cd "$(dirname "$0")/.." && pwd)/captures/video-$TS"
+mkdir -p "$OUTDIR"
+
+BASENAME=$(basename "$REMOTE_FILE")
+scp -q -O -o ConnectTimeout=10 "$USER@$HOST:$REMOTE_FILE" "$OUTDIR/$BASENAME"
+
+echo "Saved: $OUTDIR/$BASENAME"

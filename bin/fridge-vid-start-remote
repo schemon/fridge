@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+REMOTE_BIN=${FRIDGE_PI_BIN:-/home/sixten/bin}
+
+# optional session id arg
+SESSION_ID=${1:-""}
+
+CMD="$REMOTE_BIN/fridge-vid-start"
+if [ -n "$SESSION_ID" ]; then
+  SESSION_DIR=$(ssh -o ConnectTimeout=5 "$USER@$HOST" "bash -lc '$CMD $SESSION_ID'")
+else
+  SESSION_DIR=$(ssh -o ConnectTimeout=5 "$USER@$HOST" "bash -lc '$CMD'")
+fi
+
+echo "$SESSION_DIR"

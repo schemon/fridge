@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TS=$(date +%Y%m%d-%H%M%S)
+SESSION_ID=${1:-"$TS"}
+OUTDIR="$HOME/fridge-captures/sessions/$SESSION_ID"
+mkdir -p "$OUTDIR"
+
+WIDTH=${WIDTH:-2304}
+HEIGHT=${HEIGHT:-1296}
+FRAMERATE=${FRAMERATE:-30}
+TIMEOUT_MS=${TIMEOUT_MS:-0}   # 0 = record until stopped (supported by rpicam-vid)
+
+H264="$OUTDIR/clip.h264"
+PIDFILE="$OUTDIR/record.pid"
+META="$OUTDIR/meta.txt"
+LOGFILE="$OUTDIR/record.log"
+
+# Important: fully detach from the SSH session.
+# If the background process keeps stdout/stderr attached, ssh can hang.
+nohup rpicam-vid -n -t "$TIMEOUT_MS" --width "$WIDTH" --height "$HEIGHT" --framerate "$FRAMERATE" -o "$H264" \
+  >"$LOGFILE" 2>&1 < /dev/null &
+
+echo $! > "$PIDFILE"
+
+{
+  echo "session_id=$SESSION_ID"
+  echo "started_at=$(date -Iseconds)"
+  echo "width=$WIDTH"
+  echo "height=$HEIGHT"
+  echo "framerate=$FRAMERATE"
+  echo "timeout_ms=$TIMEOUT_MS"
+  echo "h264=$H264"
+  echo "pid=$(cat "$PIDFILE")"
+  echo "log=$LOGFILE"
+} > "$META"
+
+echo "$OUTDIR"

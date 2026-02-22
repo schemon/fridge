@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Extract frames at deterministic, fixed time steps (e.g. every 100ms)
+# and name them by timestamp: t_0000ms.png, t_0100ms.png, ...
+#
+# Usage:
+#   ./bin/fridge-frames-deterministic <input.mp4> [--outdir DIR]
+#       [--step-ms 100] [--duration-s 5] [--start-s 0]
+#       [--format png|jpg] [--jpg-q 2]
+#
+# Notes:
+# - Uses accurate seeking (-ss AFTER -i), which is slower but far more deterministic.
+
+IN=${1:-""}
+if [ -z "$IN" ] || [[ "$IN" == "--"* ]]; then
+  echo "Usage: $0 <input.mp4> [--outdir DIR] [--step-ms 100] [--duration-s S] [--start-s 0] [--format png|jpg] [--jpg-q 2]" >&2
+  exit 2
+fi
+shift || true
+
+OUTDIR=""
+STEP_MS=100
+DURATION_S=""  # if empty, auto-probe
+START_S=0
+FORMAT="png"
+JPG_Q=2
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --outdir)
+      OUTDIR=${2:-""}; shift 2 ;;
+    --step-ms)
+      STEP_MS=${2:-""}; shift 2 ;;
+    --duration-s)
+      DURATION_S=${2:-""}; shift 2 ;;
+    --start-s)
+      START_S=${2:-""}; shift 2 ;;
+    --format)
+      FORMAT=${2:-""}; shift 2 ;;
+    --jpg-q)
+      JPG_Q=${2:-""}; shift 2 ;;
+    -h|--help)
+      sed -n '1,120p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ ! -f "$IN" ]; then
+  echo "Input not found: $IN" >&2
+  exit 2
+fi
+
+if ! [[ "$STEP_MS" =~ ^[0-9]+$ ]] || [ "$STEP_MS" -le 0 ]; then
+  echo "--step-ms must be a positive integer (ms). Got: $STEP_MS" >&2
+  exit 2
+fi
+
+if ! [[ "$START_S" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "--start-s must be a number (seconds). Got: $START_S" >&2
+  exit 2
+fi
+
+if [ -z "$OUTDIR" ]; then
+  TS=$(date +%Y%m%d-%H%M%S)
+  ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+  OUTDIR="$ROOT_DIR/captures/frames-${STEP_MS}ms-$TS"
+fi
+mkdir -p "$OUTDIR"
+
+# Probe duration if not provided
+if [ -z "$DURATION_S" ]; then
+  DURATION_S=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$IN" | head -n 1 || true)
+fi
+
+export IN OUTDIR STEP_MS START_S DURATION_S FORMAT JPG_Q
+
+python3 - <<'PY'
+import os, math, subprocess
+
+IN = os.environ['IN']
+OUTDIR = os.environ['OUTDIR']
+STEP_MS = int(os.environ['STEP_MS'])
+START_S = float(os.environ['START_S'])
+DURATION_S = float(os.environ['DURATION_S'])
+FORMAT = os.environ['FORMAT'].lower()
+JPG_Q = int(os.environ['JPG_Q'])
+
+if FORMAT not in ('png','jpg','jpeg'):
+    raise SystemExit(f"--format must be png or jpg. Got: {FORMAT}")
+if FORMAT == 'jpeg':
+    FORMAT = 'jpg'
+
+# number of samples: t = START_S .. < START_S + DURATION_S, step STEP_MS
+# Example: 5.0s and 100ms => 50 samples (0.0 .. 4.9)
+count = int(math.floor((DURATION_S * 1000.0) / STEP_MS + 1e-9))
+if count <= 0:
+    raise SystemExit(f"Computed 0 frames. duration_s={DURATION_S}, step_ms={STEP_MS}")
+
+# Export count for shell to print summary
+open(os.path.join(OUTDIR, '_meta.txt'),'w').write(
+    f"input={IN}\nstart_s={START_S}\nduration_s={DURATION_S}\nstep_ms={STEP_MS}\nframes={count}\nformat={FORMAT}\n"
+)
+
+for i in range(count):
+    ms = i * STEP_MS
+    t = START_S + (ms / 1000.0)
+    out = os.path.join(OUTDIR, f"t_{ms:04d}ms.{FORMAT}")
+
+    # Accurate seek: put -ss AFTER -i (slower but deterministic)
+    cmd = [
+        'ffmpeg','-hide_banner','-loglevel','error','-y',
+        '-i', IN,
+        '-ss', f"{t:.3f}",
+        '-frames:v','1',
+    ]
+
+    if FORMAT == 'jpg':
+        # q:v: 2 is high quality, higher is worse
+        cmd += ['-q:v', str(JPG_Q)]
+
+    cmd += [out]
+
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"ffmpeg failed at t={t:.3f}s -> {out} (exit {e.returncode})")
+
+print(f"Wrote {count} frames to: {OUTDIR}")
+PY

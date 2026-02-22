@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SESSION_DIR=${1:-""}
+if [ -z "$SESSION_DIR" ]; then
+  echo "Usage: fridge-vid-stop <session_dir>" >&2
+  exit 2
+fi
+
+PIDFILE="$SESSION_DIR/record.pid"
+H264="$SESSION_DIR/clip.h264"
+MP4="$SESSION_DIR/clip.mp4"
+
+if [ ! -f "$PIDFILE" ]; then
+  echo "No pidfile at $PIDFILE" >&2
+  exit 1
+fi
+
+PID=$(cat "$PIDFILE")
+
+# graceful stop
+kill -INT "$PID" 2>/dev/null || true
+
+for i in $(seq 1 25); do
+  if kill -0 "$PID" 2>/dev/null; then
+    sleep 0.2
+  else
+    break
+  fi
+done
+
+if kill -0 "$PID" 2>/dev/null; then
+  kill -TERM "$PID" 2>/dev/null || true
+  sleep 0.5
+fi
+
+# Convert to MP4.
+# rpicam-vid produces a raw H.264 elementary stream without reliable timestamps.
+# If we "-c copy" remux, players may show weird duration / ordering.
+# So we generate monotonic PTS and encode to a sane CFR stream.
+FRAMERATE=${FRAMERATE:-30}
+if [ -f "$H264" ]; then
+  ffmpeg -y \
+    -r "$FRAMERATE" -i "$H264" \
+    -vf "setpts=N/($FRAMERATE*TB)" \
+    -fps_mode cfr \
+    -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 23 -profile:v main -level 4.2 \
+    -x264-params "bframes=0:keyint=$FRAMERATE:min-keyint=$FRAMERATE:scenecut=0" \
+    -movflags +faststart \
+    "$MP4" >/dev/null 2>&1 \
+    || true
+
+  # fallback: try a copy-remux if encode failed
+  if [ ! -f "$MP4" ]; then
+    ffmpeg -y -fflags +genpts -r "$FRAMERATE" -i "$H264" -c copy -movflags +faststart "$MP4" >/dev/null 2>&1 || true
+  fi
+fi
+
+if [ -f "$SESSION_DIR/meta.txt" ]; then
+  echo "stopped_at=$(date -Iseconds)" >> "$SESSION_DIR/meta.txt"
+fi
+
+echo "$SESSION_DIR"
+[ -f "$MP4" ] && echo "$MP4" || echo "$H264"

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Record a short clip from the fridge camera and fetch it locally.
+# Usage:
+#   ./bin/fridge-vid-clip [seconds] [session_id]
+# Examples:
+#   ./bin/fridge-vid-clip          # default 5s
+#   ./bin/fridge-vid-clip 10       # 10s
+#   ./bin/fridge-vid-clip 3 test1  # 3s with explicit session id
+
+DURATION_SEC=${1:-5}
+SESSION_ID=${2:-""}
+
+# basic validation
+if ! [[ "$DURATION_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Duration must be a number of seconds (e.g. 5 or 2.5). Got: $DURATION_SEC" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# 1) start
+if [ -n "$SESSION_ID" ]; then
+  SESSION_DIR=$("$ROOT_DIR/bin/fridge-vid-start-remote" "$SESSION_ID")
+else
+  SESSION_DIR=$("$ROOT_DIR/bin/fridge-vid-start-remote")
+fi
+
+echo "Remote session: $SESSION_DIR" >&2
+
+# 2) wait
+sleep "$DURATION_SEC"
+
+# 3) stop (expects two lines: session_dir + remote_file_path)
+STOP_OUT=$("$ROOT_DIR/bin/fridge-vid-stop-remote" "$SESSION_DIR")
+REMOTE_FILE=$(echo "$STOP_OUT" | tail -n 1)
+
+if [ -z "$REMOTE_FILE" ]; then
+  echo "Stop output didn't include a remote file path. Output was:" >&2
+  echo "$STOP_OUT" >&2
+  exit 3
+fi
+
+echo "Remote file: $REMOTE_FILE" >&2
+
+# 4) fetch
+"$ROOT_DIR/bin/fridge-vid-fetch" "$REMOTE_FILE"
