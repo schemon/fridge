@@ -20,6 +20,7 @@ set -euo pipefail
 #   frames extract <input.mp4> [options]     Deterministic frame extraction (default 100ms)
 #
 #   tx list [--limit N] [--pretty]          List transactions (newest first)
+#   tx get <tx-id>                          Download tx metadata + proofs into .cache/tx/<tx-id>/
 #   reset [--what analysis|tx] [--apply]     Reset derived analysis state in sessions/ (Pi)
 #
 #   rpi deploy [--dry-run] [--host H] [--user U] [--dest D]
@@ -176,6 +177,14 @@ case "$cmd" in
         fi
         require_script "$ROOT_DIR/bin/fridge-tx-list-remote"
         run "$ROOT_DIR/bin/fridge-tx-list-remote" "$@"
+        ;;
+      get)
+        if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ] || [ -z "${1:-}" ]; then
+          echo "Usage: ./bin/fridge tx get <tx-id>" >&2
+          exit 0
+        fi
+        require_script "$ROOT_DIR/bin/fridge-tx-get"
+        run "$ROOT_DIR/bin/fridge-tx-get" "$@"
         ;;
       "")
         die "missing subcommand: tx <list>"

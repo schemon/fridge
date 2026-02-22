@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fetch a transaction (by tx_id) from the Pi and cache its metadata + proof images locally.
+#
+# Usage:
+#   ./bin/fridge-tx-get <tx-id>
+#
+# Output:
+#   .cache/tx/<tx-id>/
+#     - tx.json
+#     - proofs/<files...>
+
+TXID=${1:-""}
+[ -n "$TXID" ] || { echo "Usage: $0 <tx-id>" >&2; exit 2; }
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+DATA_DIR=${FRIDGE_PI_DATA_DIR:-/home/sixten/fridge-data}
+TX_LOG="$DATA_DIR/transactions.jsonl"
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+OUTDIR="$ROOT_DIR/.cache/tx/$TXID"
+PROOFS_DIR="$OUTDIR/proofs"
+
+mkdir -p "$PROOFS_DIR"
+
+# 1) Fetch tx line as JSON
+TX_JSON=$(ssh -o ConnectTimeout=5 "$USER@$HOST" "TXID='$TXID' TX_LOG='$TX_LOG' python3 - <<'PY'
+import json
+import sys
+import os
+
+txid=os.environ.get('TXID')
+log=os.environ.get('TX_LOG')
+
+if not txid or not log:
+    sys.exit(2)
+
+try:
+    with open(log,'r',encoding='utf-8',errors='ignore') as f:
+        lines=f.read().splitlines()
+except FileNotFoundError:
+    sys.exit(3)
+
+found=None
+for ln in reversed(lines):
+    ln=ln.strip()
+    if not ln: continue
+    try:
+        obj=json.loads(ln)
+    except Exception:
+        continue
+    if obj.get('tx_id')==txid:
+        found=obj
+        break
+
+if not found:
+    sys.exit(4)
+
+print(json.dumps(found, ensure_ascii=False))
+PY" 2>/dev/null || true)
+
+if [ -z "$TX_JSON" ]; then
+  echo "Could not find tx_id=$TXID on $HOST (or failed reading $TX_LOG)" >&2
+  exit 1
+fi
+
+echo "$TX_JSON" > "$OUTDIR/tx.json"
+
+# 2) Download evidence proofs if present
+# Evidence paths are stored relative to ~/fridge-data, e.g. proofs/<file>.png
+EVIDENCE=$(printf '%s' "$TX_JSON" | python3 -c 'import json,sys; obj=json.load(sys.stdin); ev=obj.get("evidence") or [];\
+[print(p) for p in ev if isinstance(p,str) and p.strip()]')
+
+if [ -n "$EVIDENCE" ]; then
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    remote="$DATA_DIR/$rel"
+    # keep basename; avoid nesting
+    base=$(basename "$rel")
+    scp -q -O -o ConnectTimeout=10 "$USER@$HOST:$remote" "$PROOFS_DIR/$base" || {
+      echo "Warning: failed to fetch proof: $remote" >&2
+    }
+  done <<< "$EVIDENCE"
+fi
+
+echo "$OUTDIR"
