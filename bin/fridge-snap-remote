@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${FRIDGE_PI_HOST:-raspberrypi.local}
+USER=${FRIDGE_PI_USER:-sixten}
+REMOTE_CMD=${FRIDGE_REMOTE_CMD:-/home/sixten/bin/fridge-snap}
+
+TS=$(date +%Y%m%d-%H%M%S)
+OUTDIR="$(pwd)/captures/$TS"
+mkdir -p "$OUTDIR"
+
+# Run remote capture; command prints the remote file path
+REMOTE_PATH=$(ssh -o ConnectTimeout=5 -o ServerAliveInterval=2 -o ServerAliveCountMax=2 "$USER@$HOST" "bash -lc '$REMOTE_CMD'")
+
+# Fetch to local
+scp -q -O -o ConnectTimeout=10 -o ServerAliveInterval=2 -o ServerAliveCountMax=2 "$USER@$HOST:$REMOTE_PATH" "$OUTDIR/still.jpg"
+
+echo "Saved: $OUTDIR/still.jpg"
