@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""fridge-burst
+
+Capture still frames at a fixed interval with a fixed shutter (short exposure)
+using Picamera2, and do lightweight motion analysis on the Pi.
+
+Outputs a session folder under ~/fridge-captures/burst/<session_id>/ with:
+- frames/t_XXXXms.jpg  (every interval)
+- proofs/ (a few representative frames)
+- meta.txt
+- motion.csv
+- status.json
+
+Usage (on Pi):
+  fridge-burst [--interval-ms 100] [--duration-s 10] [--shutter-us 1000] [--gain 1.0] [--width 2304] [--height 1296] [--session-id ID]
+
+Env (optional):
+  INTERVAL_MS, DURATION_S, SHUTTER_US, GAIN, WIDTH, HEIGHT, SESSION_ID
+
+Notes:
+- Setting very short shutter requires lots of light.
+- We disable AE and set ExposureTime/AnalogueGain.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import time
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+from picamera2 import Picamera2
+from PIL import Image
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(add_help=True)
+
+    def env_int(name: str, default: int) -> int:
+        v = os.environ.get(name)
+        return default if not v else int(v)
+
+    def env_float(name: str, default: float) -> float:
+        v = os.environ.get(name)
+        return default if not v else float(v)
+
+    p.add_argument("--interval-ms", type=int, default=env_int("INTERVAL_MS", 100))
+    p.add_argument("--duration-s", type=float, default=float(os.environ.get("DURATION_S", "10")))
+    p.add_argument("--shutter-us", type=int, default=env_int("SHUTTER_US", 1000))
+    p.add_argument("--gain", type=float, default=env_float("GAIN", 1.0))
+    p.add_argument("--gain-sweep", default=os.environ.get("GAIN_SWEEP", ""),
+                   help="Comma-separated gains to test quickly, e.g. '1,2,4,8,16'. If set, captures one proof frame per gain and exits.")
+    p.add_argument("--width", type=int, default=env_int("WIDTH", 2304))
+    p.add_argument("--height", type=int, default=env_int("HEIGHT", 1296))
+    p.add_argument("--session-id", default=os.environ.get("SESSION_ID", ""))
+
+    # motion detection tuning
+    p.add_argument("--always-save", action="store_true", default=os.environ.get("ALWAYS_SAVE", "0") not in ("0", "", "false", "False"),
+                   help="Save every frame (still logs motion).")
+    p.add_argument("--motion-threshold", type=float, default=float(os.environ.get("MOTION_THRESHOLD", "0.35")))
+    p.add_argument("--quiet-ms", type=int, default=int(os.environ.get("QUIET_MS", "800")))
+    p.add_argument("--prebuffer-ms", type=int, default=int(os.environ.get("PREBUFFER_MS", "2000")))
+
+    return p.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if args.interval_ms <= 0:
+        raise SystemExit("interval-ms must be > 0")
+    if args.duration_s <= 0:
+        raise SystemExit("duration-s must be > 0")
+    if args.shutter_us <= 0:
+        raise SystemExit("shutter-us must be > 0")
+    if args.gain <= 0:
+        raise SystemExit("gain must be > 0")
+
+    sid = args.session_id.strip() or time.strftime("%Y%m%d-%H%M%S")
+
+    home = Path.home()
+    root = home / "fridge-captures" / "burst" / sid
+    frames_dir = root / "frames"
+    proofs_dir = root / "proofs"
+    root.mkdir(parents=True, exist_ok=True)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    proofs_dir.mkdir(parents=True, exist_ok=True)
+
+    status_path = root / "status.json"
+    meta_path = root / "meta.txt"
+    motion_path = root / "motion.csv"
+
+    status_path.write_text(
+        json.dumps(
+            {
+                "state": "starting",
+                "session_id": sid,
+                "interval_ms": args.interval_ms,
+                "duration_s": args.duration_s,
+                "shutter_us": args.shutter_us,
+                "gain": args.gain,
+                "width": args.width,
+                "height": args.height,
+                "updated_at": iso_now(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    meta_path.write_text(
+        "\n".join(
+            [
+                f"session_id={sid}",
+                f"started_at={iso_now()}",
+                f"interval_ms={args.interval_ms}",
+                f"duration_s={args.duration_s}",
+                f"shutter_us={args.shutter_us}",
+                f"gain={args.gain}",
+                f"width={args.width}",
+                f"height={args.height}",
+                f"motion_threshold={args.motion_threshold}",
+                f"quiet_ms={args.quiet_ms}",
+                f"prebuffer_ms={args.prebuffer_ms}",
+            ]
+        )
+        + "\n"
+    )
+
+    picam2 = Picamera2()
+
+    # Prefer a format that's easy for numpy/PIL.
+    config = picam2.create_video_configuration(
+        main={"size": (args.width, args.height), "format": "RGB888"}
+    )
+    picam2.configure(config)
+
+    def save_frame(out_path: Path, rgb: np.ndarray) -> None:
+        # JPEG is much faster/smaller than PNG at this resolution.
+        Image.fromarray(rgb).save(out_path, format="JPEG", quality=85, subsampling=0)
+
+    def set_exposure_gain(gain: float) -> None:
+        picam2.set_controls(
+            {
+                "ExposureTime": int(args.shutter_us),
+                "AnalogueGain": float(gain),
+            }
+        )
+
+    # Apply initial exposure + gain.
+    set_exposure_gain(args.gain)
+
+    picam2.start()
+    time.sleep(0.2)  # allow pipeline to settle
+
+    # Quick gain sweep mode: capture one proof frame per gain and exit.
+    if args.gain_sweep:
+        try:
+            gains = [float(x.strip()) for x in str(args.gain_sweep).split(",") if x.strip()]
+        except Exception as e:
+            raise SystemExit(f"Invalid --gain-sweep: {args.gain_sweep} ({e})")
+        if not gains:
+            raise SystemExit("--gain-sweep provided but empty")
+
+        status_path.write_text(
+            json.dumps({"state": "gain_sweep", "session_id": sid, "updated_at": iso_now(), "gains": gains}, indent=2) + "\n"
+        )
+
+        # warm up
+        _ = picam2.capture_array("main")
+        time.sleep(0.05)
+
+        for g in gains:
+            set_exposure_gain(g)
+            time.sleep(0.05)
+            arr = picam2.capture_array("main")
+            out = proofs_dir / f"sweep_sh{args.shutter_us}us_gain{g:g}_{args.width}x{args.height}.jpg"
+            save_frame(out, arr)
+
+        picam2.stop()
+        status_path.write_text(
+            json.dumps({"state": "done", "mode": "gain_sweep", "session_id": sid, "updated_at": iso_now(), "proofs": len(gains)}, indent=2) + "\n"
+        )
+        print(str(root))
+        return 0
+
+    interval_s = args.interval_ms / 1000.0
+    prebuffer_n = max(1, int(args.prebuffer_ms / args.interval_ms))
+
+    prev_small = None
+    active = False
+    last_motion_ts = None
+
+    # store (t_ms, frame_array)
+    prebuffer: deque[tuple[int, np.ndarray]] = deque(maxlen=prebuffer_n)
+
+    # motion log
+    with motion_path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["t_ms", "motion_score", "active"])
+
+        t0 = time.monotonic()
+        end_t = t0 + args.duration_s
+        frame_idx = 0
+
+        status_path.write_text(
+            json.dumps({"state": "capturing", "session_id": sid, "updated_at": iso_now()}, indent=2) + "\n"
+        )
+
+        while True:
+            now = time.monotonic()
+            if now >= end_t:
+                break
+
+            # Capture
+            arr = picam2.capture_array("main")  # RGB888
+            t_ms = frame_idx * args.interval_ms
+            frame_idx += 1
+
+            # Downsample + grayscale for cheap motion score
+            small = arr[::8, ::8, :]
+            gray = (0.299 * small[:, :, 0] + 0.587 * small[:, :, 1] + 0.114 * small[:, :, 2]).astype(np.float32)
+
+            motion = 0.0
+            if prev_small is not None:
+                motion = float(np.mean(np.abs(gray - prev_small)))
+            prev_small = gray
+
+            # State machine
+            if args.always_save:
+                save_frame(frames_dir / f"t_{t_ms:04d}ms.jpg", arr)
+            else:
+                if motion >= args.motion_threshold:
+                    if not active:
+                        active = True
+                        # flush prebuffer to disk immediately
+                        for pb_t, pb_arr in list(prebuffer):
+                            out = frames_dir / f"t_{pb_t:04d}ms.jpg"
+                            if not out.exists():
+                                save_frame(out, pb_arr)
+                    last_motion_ts = now
+
+                if active:
+                    # Always save frames while active
+                    save_frame(frames_dir / f"t_{t_ms:04d}ms.jpg", arr)
+
+                    # stop early if quiet long enough
+                    if last_motion_ts is not None:
+                        quiet_for_ms = (now - last_motion_ts) * 1000.0
+                        if quiet_for_ms >= args.quiet_ms:
+                            break
+                else:
+                    prebuffer.append((t_ms, arr))
+
+            w.writerow([t_ms, f"{motion:.4f}", int(active)])
+
+            # Sleep to maintain roughly interval cadence
+            after = time.monotonic()
+            sleep_for = interval_s - (after - now)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+    picam2.stop()
+
+    # Proof frames: pick first/middle/last from saved frames
+    saved = sorted(frames_dir.glob("t_*ms.jpg"))
+    if saved:
+        picks = []
+        picks.append(saved[0])
+        if len(saved) >= 3:
+            picks.append(saved[len(saved) // 2])
+        if len(saved) >= 2:
+            picks.append(saved[-1])
+        # copy
+        for i, pth in enumerate(picks, start=1):
+            (proofs_dir / f"proof_{i}_{pth.name}").write_bytes(pth.read_bytes())
+
+    status_path.write_text(
+        json.dumps(
+            {
+                "state": "done",
+                "session_id": sid,
+                "updated_at": iso_now(),
+                "frames_saved": len(list(frames_dir.glob('t_*ms.jpg'))),
+                "active": active,
+                "root": str(root),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    # Script-friendly output
+    print(str(root))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
