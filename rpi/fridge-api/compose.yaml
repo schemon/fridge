@@ -9,5 +9,7 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       FRIDGE_SESSIONS_DIR: /data/sessions
+      FRIDGE_HISTORY_DIR: /data/history
     volumes:
       - /home/sixten/fridge-captures/sessions:/data/sessions:ro
+      - /home/sixten/fridge-captures/history:/data/history:ro

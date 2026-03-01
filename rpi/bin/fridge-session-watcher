@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""
+fridge-session-watcher  —  polling daemon for incremental session analysis.
+
+Polls ~/fridge-captures/sessions/ every POLL_INTERVAL_MS (default 100ms).
+For each session dir:
+  1. Acquires a per-session lock file (.analyze.lock).
+  2. Calls fridge-analyze-session to process any new frames.
+  3. If the session is closed AND all frames are analyzed, calls fridge-finalize-session.
+
+Concurrency model: sequential with minimum sleep.
+The 100ms is a *minimum idle interval*, not a strict tick. The loop records
+wall time at the start, does its work, then sleeps max(0, interval - elapsed).
+A slow analysis run delays the next poll but never causes two concurrent runs
+on the same session.
+
+Intended to run as a systemd service (Restart=always).
+"""
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+import glob
+from datetime import datetime, timezone
+
+HOME = os.path.expanduser("~")
+SESSIONS_DIR = os.path.join(HOME, "fridge-captures", "sessions")
+POLL_INTERVAL_MS = int(os.environ.get("POLL_INTERVAL_MS", "100"))
+BIN_DIR = os.path.dirname(os.path.abspath(__file__))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[watcher %(asctime)s] %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+    stream=sys.stderr,
+)
+log = logging.getLogger("watcher")
+
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def is_stills_session(session_dir):
+    """Only handle *-stills sessions for now."""
+    return os.path.basename(session_dir).endswith("-stills")
+
+
+def lock_path(session_dir):
+    return os.path.join(session_dir, ".analyze.lock")
+
+
+def is_locked(session_dir):
+    """Return True if session is locked by a live process."""
+    lp = lock_path(session_dir)
+    if not os.path.exists(lp):
+        return False
+    try:
+        with open(lp) as f:
+            pid = int(f.read().strip())
+        # Check if PID is alive
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError, PermissionError):
+        # Stale lock — remove it
+        try:
+            os.remove(lp)
+        except FileNotFoundError:
+            pass
+        return False
+
+
+def acquire_lock(session_dir):
+    lp = lock_path(session_dir)
+    with open(lp, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def release_lock(session_dir):
+    try:
+        os.remove(lock_path(session_dir))
+    except FileNotFoundError:
+        pass
+
+
+def all_frames_analyzed(session_dir):
+    """Return True if every frame in frames/ appears in analysis/progress.json."""
+    frames_dir = os.path.join(session_dir, "frames")
+    all_frames = sorted(
+        os.path.basename(p)
+        for ext in ("*.jpg", "*.jpeg", "*.png")
+        for p in glob.glob(os.path.join(frames_dir, ext))
+    )
+    if not all_frames:
+        return False  # no frames yet — don't finalize an empty session
+    progress = load_json(
+        os.path.join(session_dir, "analysis", "progress.json"),
+        {"analyzed": []},
+    )
+    analyzed = set(progress.get("analyzed", []))
+    return all(f in analyzed for f in all_frames)
+
+
+def is_closed(session_dir):
+    status = load_json(os.path.join(session_dir, "status.json"), {})
+    return bool(status.get("closed", False))
+
+
+def run_script(script_name, session_dir):
+    script = os.path.join(BIN_DIR, script_name)
+    result = subprocess.run(
+        [script, session_dir],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        log.warning(
+            "%s failed for %s (rc=%d): %s",
+            script_name,
+            os.path.basename(session_dir),
+            result.returncode,
+            result.stderr.strip()[:200],
+        )
+    return result.returncode
+
+
+def list_sessions():
+    try:
+        entries = sorted(
+            os.path.join(SESSIONS_DIR, e)
+            for e in os.listdir(SESSIONS_DIR)
+        )
+    except FileNotFoundError:
+        return []
+    return [e for e in entries if os.path.isdir(e) and is_stills_session(e)]
+
+
+def process_session(session_dir):
+    sid = os.path.basename(session_dir)
+
+    rc = run_script("fridge-analyze-session", session_dir)
+    if rc != 0:
+        return
+
+    if is_closed(session_dir) and all_frames_analyzed(session_dir):
+        log.info("%s: closed + all frames analyzed — finalizing", sid)
+        run_script("fridge-finalize-session", session_dir)
+
+
+def main():
+    log.info("starting  sessions_dir=%s  poll_interval_ms=%d", SESSIONS_DIR, POLL_INTERVAL_MS)
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+    while True:
+        t0 = time.monotonic()
+
+        for session_dir in list_sessions():
+            if is_locked(session_dir):
+                log.debug("%s: locked — skipping", os.path.basename(session_dir))
+                continue
+            acquire_lock(session_dir)
+            try:
+                process_session(session_dir)
+            except Exception as exc:
+                log.exception("unexpected error processing %s: %s", os.path.basename(session_dir), exc)
+            finally:
+                release_lock(session_dir)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        sleep_s = max(0.0, (POLL_INTERVAL_MS - elapsed_ms) / 1000.0)
+        time.sleep(sleep_s)
+
+
+if __name__ == "__main__":
+    main()

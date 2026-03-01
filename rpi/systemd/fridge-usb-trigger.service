@@ -1,0 +1,26 @@
+[Unit]
+Description=Fridge USB Trigger (Arduino Uno -> start/stop recording)
+After=network.target
+
+[Service]
+Type=simple
+User=sixten
+Group=sixten
+WorkingDirectory=/home/sixten
+Environment=FRIDGE_PORT=/dev/ttyACM0
+Environment=FRIDGE_BAUD=115200
+Environment=FRIDGE_MIN_RECORD_S=2.0
+Environment=FRIDGE_MAX_RECORD_S=600
+Environment=FRIDGE_LOG_VAL_EVERY=25
+ExecStart=/usr/bin/python3 /home/sixten/bin/fridge-usb-trigger
+Restart=always
+RestartSec=2
+# Ensure we can access ttyACM0
+SupplementaryGroups=dialout
+
+# Logging
+StandardOutput=append:/home/sixten/fridge-usb-trigger.log
+StandardError=append:/home/sixten/fridge-usb-trigger.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Fridge Session Watcher (incremental stills analysis)
+After=network.target
+
+[Service]
+Type=simple
+User=sixten
+Group=sixten
+WorkingDirectory=/home/sixten
+Environment=POLL_INTERVAL_MS=100
+ExecStart=/usr/bin/python3 /home/sixten/bin/fridge-session-watcher
+Restart=always
+RestartSec=2
+
+# Logging
+StandardOutput=append:/home/sixten/fridge-session-watcher.log
+StandardError=append:/home/sixten/fridge-session-watcher.log
+
+[Install]
+WantedBy=multi-user.target

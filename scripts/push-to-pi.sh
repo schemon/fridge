@@ -11,7 +11,8 @@ set -euo pipefail
 #   ./scripts/push-to-pi.sh rpi-door-listener        # fridge-usb-trigger script + systemd unit
 #   ./scripts/push-to-pi.sh rpi-cam-recorder         # capture scripts (vid-start/stop, burst, sessions-list, reset, tx-list)
 #   ./scripts/push-to-pi.sh arduino-firmware         # ldr_usb sketch: rsync + compile + flash
-#   ./scripts/push-to-pi.sh rpi-analyze              # fridge-vid-analyze script only
+#   ./scripts/push-to-pi.sh rpi-analyze              # fridge-vid-analyze + stills analyze/finalize scripts
+#   ./scripts/push-to-pi.sh rpi-analyze-watcher      # fridge-session-watcher script + systemd unit
 #   ./scripts/push-to-pi.sh rpi-web rpi-door-listener  # multiple components
 #   DRY_RUN=1 ./scripts/push-to-pi.sh               # show what would happen (no changes)
 #
@@ -26,6 +27,7 @@ REMOTE_ARDUINO_DIR="${REMOTE_ARDUINO_DIR:-/home/sixten/ldr_usb}"
 REMOTE_SYSTEMD_DIR="${REMOTE_SYSTEMD_DIR:-/etc/systemd/system}"
 REMOTE_API_DIR="${REMOTE_API_DIR:-/home/sixten/fridge-api}"
 SYSTEMD_UNIT="fridge-usb-trigger.service"
+WATCHER_UNIT="fridge-session-watcher.service"
 
 LOCAL_RPI_BIN="rpi/bin/"
 LOCAL_TRIGGER_SCRIPT="rpi/bin/fridge-usb-trigger"
@@ -44,7 +46,9 @@ CAPTURE_SCRIPTS=(
 
 DRY_RUN="${DRY_RUN:-0}"
 RSYNC_FLAGS=(-av --delete)
+RSYNC_FILE_FLAGS=(-av)
 [[ "$DRY_RUN" == "1" ]] && RSYNC_FLAGS+=(-n)
+[[ "$DRY_RUN" == "1" ]] && RSYNC_FILE_FLAGS+=(-n)
 ### ===================
 
 say()  { printf "%s\n" "$*"; }
@@ -69,13 +73,13 @@ deploy_rpi_web() {
 
 deploy_rpi_door_listener() {
   say "==> [rpi-door-listener] syncing fridge-usb-trigger script..."
-  rsync -av ${DRY_RUN:+-n} "$LOCAL_TRIGGER_SCRIPT" "$HOST:$REMOTE_BIN_DIR/fridge-usb-trigger"
+  rsync "${RSYNC_FILE_FLAGS[@]}" "$LOCAL_TRIGGER_SCRIPT" "$HOST:$REMOTE_BIN_DIR/fridge-usb-trigger"
   if [[ "$DRY_RUN" == "0" ]]; then
     ssh "$HOST" "chmod +x '$REMOTE_BIN_DIR/fridge-usb-trigger'"
   fi
 
   say "==> [rpi-door-listener] installing systemd unit..."
-  rsync -av ${DRY_RUN:+-n} "$LOCAL_SYSTEMD_UNIT" "$HOST:/tmp/${SYSTEMD_UNIT}"
+  rsync "${RSYNC_FILE_FLAGS[@]}" "$LOCAL_SYSTEMD_UNIT" "$HOST:/tmp/${SYSTEMD_UNIT}"
   if [[ "$DRY_RUN" == "1" ]]; then
     dryn "systemctl daemon-reload + enable + restart $SYSTEMD_UNIT"
   else
@@ -89,7 +93,7 @@ deploy_rpi_door_listener() {
 deploy_rpi_cam_recorder() {
   say "==> [rpi-cam-recorder] syncing capture scripts..."
   for script in "${CAPTURE_SCRIPTS[@]}"; do
-    rsync -av ${DRY_RUN:+-n} "$LOCAL_RPI_BIN/$script" "$HOST:$REMOTE_BIN_DIR/$script"
+    rsync "${RSYNC_FILE_FLAGS[@]}" "$LOCAL_RPI_BIN/$script" "$HOST:$REMOTE_BIN_DIR/$script"
   done
   if [[ "$DRY_RUN" == "0" ]]; then
     ssh "$HOST" "chmod +x $(printf "'$REMOTE_BIN_DIR/%s' " "${CAPTURE_SCRIPTS[@]}")"
@@ -108,16 +112,38 @@ deploy_arduino_firmware() {
 }
 
 deploy_rpi_analyze() {
-  say "==> [rpi-analyze] syncing fridge-vid-analyze..."
-  rsync -av ${DRY_RUN:+-n} "$LOCAL_RPI_BIN/fridge-vid-analyze" "$HOST:$REMOTE_BIN_DIR/fridge-vid-analyze"
+  say "==> [rpi-analyze] syncing analyze scripts..."
+  local scripts=(fridge-vid-analyze fridge-stills-start fridge-stills-stop fridge-analyze-session fridge-finalize-session)
+  for script in "${scripts[@]}"; do
+    rsync "${RSYNC_FILE_FLAGS[@]}" "$LOCAL_RPI_BIN/$script" "$HOST:$REMOTE_BIN_DIR/$script"
+  done
   if [[ "$DRY_RUN" == "0" ]]; then
-    ssh "$HOST" "chmod +x '$REMOTE_BIN_DIR/fridge-vid-analyze'"
+    ssh "$HOST" "chmod +x $(printf "'$REMOTE_BIN_DIR/%s' " "${scripts[@]}")"
+  fi
+}
+
+deploy_rpi_analyze_watcher() {
+  say "==> [rpi-analyze-watcher] syncing fridge-session-watcher script..."
+  rsync "${RSYNC_FILE_FLAGS[@]}" "$LOCAL_RPI_BIN/fridge-session-watcher" "$HOST:$REMOTE_BIN_DIR/fridge-session-watcher"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    ssh "$HOST" "chmod +x '$REMOTE_BIN_DIR/fridge-session-watcher'"
+  fi
+
+  say "==> [rpi-analyze-watcher] installing systemd unit..."
+  rsync "${RSYNC_FILE_FLAGS[@]}" "rpi/systemd/${WATCHER_UNIT}" "$HOST:/tmp/${WATCHER_UNIT}"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dryn "systemctl daemon-reload + enable + restart $WATCHER_UNIT"
+  else
+    ssh "$HOST" "sudo mv /tmp/${WATCHER_UNIT} ${REMOTE_SYSTEMD_DIR}/${WATCHER_UNIT}"
+    ssh "$HOST" "sudo systemctl daemon-reload"
+    ssh "$HOST" "sudo systemctl enable --now ${WATCHER_UNIT}"
+    ssh "$HOST" "sudo systemctl status ${WATCHER_UNIT} --no-pager -n 20"
   fi
 }
 
 # ---- parse args ----
 
-ALL_COMPONENTS=(rpi-web rpi-door-listener rpi-cam-recorder arduino-firmware rpi-analyze)
+ALL_COMPONENTS=(rpi-web rpi-door-listener rpi-cam-recorder arduino-firmware rpi-analyze rpi-analyze-watcher)
 
 if [[ $# -eq 0 ]]; then
   COMPONENTS=("${ALL_COMPONENTS[@]}")
@@ -134,7 +160,8 @@ for component in "${COMPONENTS[@]}"; do
     rpi-door-listener) deploy_rpi_door_listener ;;
     rpi-cam-recorder)  deploy_rpi_cam_recorder ;;
     arduino-firmware)  deploy_arduino_firmware ;;
-    rpi-analyze)       deploy_rpi_analyze ;;
+    rpi-analyze)         deploy_rpi_analyze ;;
+    rpi-analyze-watcher) deploy_rpi_analyze_watcher ;;
     *)
       say "Unknown component: $component  (valid: ${ALL_COMPONENTS[*]})" >&2
       exit 2

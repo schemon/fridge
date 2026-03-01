@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""
+fridge-finalize-session  —  moves a fully-analyzed, closed session to history.
+
+Usage:
+    fridge-finalize-session /path/to/session_dir
+
+Guards:
+    - Exits (non-zero) if status.json does not have closed:true
+    - Exits (non-zero) if not all frames in frames/ appear in analysis/progress.json
+
+On success:
+    1. Appends analysis/transactions.jsonl to ~/fridge-data/transactions.jsonl
+    2. Updates status.json with {state:"done"} (before the move)
+    3. Moves session_dir to ~/fridge-captures/history/
+"""
+
+import json
+import os
+import shutil
+import sys
+import glob
+from datetime import datetime, timezone
+
+HOME = os.path.expanduser("~")
+HISTORY_DIR = os.path.join(HOME, "fridge-captures", "history")
+DATA_DIR = os.path.join(HOME, "fridge-data")
+TX_LOG = os.path.join(DATA_DIR, "transactions.jsonl")
+
+def ts_now():
+    return datetime.now(timezone.utc).isoformat()
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: fridge-finalize-session /path/to/session_dir", file=sys.stderr)
+        sys.exit(2)
+
+    session_dir = sys.argv[1].rstrip("/")
+    if not os.path.isdir(session_dir):
+        print(f"ERROR: session dir not found: {session_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    session_id = os.path.basename(session_dir)
+    status_file = os.path.join(session_dir, "status.json")
+    analysis_dir = os.path.join(session_dir, "analysis")
+    progress_file = os.path.join(analysis_dir, "progress.json")
+    tx_file = os.path.join(analysis_dir, "transactions.jsonl")
+
+    # --- guard: must be closed ---
+    status = load_json(status_file, {})
+    if not status.get("closed", False):
+        print(f"[finalize-session] {session_id}: not closed yet — skipping", file=sys.stderr)
+        sys.exit(1)
+
+    # --- guard: all frames must be analyzed ---
+    frames_dir = os.path.join(session_dir, "frames")
+    all_frames = sorted(
+        os.path.basename(p)
+        for ext in ("*.jpg", "*.jpeg", "*.png")
+        for p in glob.glob(os.path.join(frames_dir, ext))
+    )
+    progress = load_json(progress_file, {"analyzed": []})
+    analyzed = set(progress.get("analyzed", []))
+
+    if all_frames and not all(f in analyzed for f in all_frames):
+        missing = [f for f in all_frames if f not in analyzed]
+        print(f"[finalize-session] {session_id}: {len(missing)} frame(s) not yet analyzed — skipping", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"[finalize-session] {session_id}: finalizing ({len(all_frames)} frames)", file=sys.stderr)
+
+    # --- append per-session transactions to global log ---
+    if os.path.isfile(tx_file):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(tx_file) as src, open(TX_LOG, "a") as dst:
+            for line in src:
+                line = line.rstrip("\n")
+                if line:
+                    dst.write(line + "\n")
+        print(f"[finalize-session] {session_id}: appended transactions to {TX_LOG}", file=sys.stderr)
+
+    # --- mark done in status.json (before move so the file lands in history) ---
+    status["state"] = "done"
+    status["finalized_at"] = ts_now()
+    save_json(status_file, status)
+
+    # --- move to history ---
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    dest = os.path.join(HISTORY_DIR, session_id)
+    if os.path.exists(dest):
+        dest = f"{dest}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+    shutil.move(session_dir, dest)
+    print(f"[finalize-session] {session_id}: moved to {dest}", file=sys.stderr)
+
+    print(f"status=DONE session_id={session_id} moved_to={dest}")
+
+if __name__ == "__main__":
+    main()

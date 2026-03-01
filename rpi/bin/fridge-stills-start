@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Start capturing stills (timelapse) into a new session directory.
+# Prints the session directory path to stdout (single line).
+
+BASE_DIR="${FRIDGE_CAPTURES_DIR:-$HOME/fridge-captures/sessions}"
+INTERVAL_MS="${FRIDGE_INTERVAL_MS:-100}"
+SHUTTER_US="${FRIDGE_SHUTTER_US:-}"
+GAIN="${FRIDGE_GAIN:-}"
+WIDTH="${FRIDGE_WIDTH:-}"
+HEIGHT="${FRIDGE_HEIGHT:-}"
+FORMAT="${FRIDGE_FORMAT:-jpg}"
+
+TS=$(date +%Y%m%d-%H%M%S)
+SESSION_DIR="$BASE_DIR/${TS}-stills"
+FRAMES_DIR="$SESSION_DIR/frames"
+
+mkdir -p "$FRAMES_DIR"
+
+# Choose camera command
+if command -v rpicam-still >/dev/null 2>&1; then
+  CAM="rpicam-still"
+elif command -v libcamera-still >/dev/null 2>&1; then
+  CAM="libcamera-still"
+elif command -v raspistill >/dev/null 2>&1; then
+  CAM="raspistill"
+else
+  echo "ERROR: No camera still command found (rpicam-still/libcamera-still/raspistill)" >&2
+  exit 1
+fi
+
+LOG="$SESSION_DIR/capture.log"
+PID_FILE="$SESSION_DIR/capture.pid"
+SESSION_FILE="$SESSION_DIR/session_dir.txt"
+
+# Build args
+ARGS=()
+if [[ "$CAM" == "raspistill" ]]; then
+  ARGS+=( -tl "$INTERVAL_MS" -t 999999999 )
+  ARGS+=( -o "$FRAMES_DIR/frame_%06d.$FORMAT" )
+  [[ -n "$WIDTH" ]] && ARGS+=( -w "$WIDTH" )
+  [[ -n "$HEIGHT" ]] && ARGS+=( -h "$HEIGHT" )
+  [[ -n "$SHUTTER_US" ]] && ARGS+=( -ss "$SHUTTER_US" )
+  [[ -n "$GAIN" ]] && ARGS+=( -ag "$GAIN" )
+else
+  ARGS+=( --timelapse "$INTERVAL_MS" --timeout 0 )
+  ARGS+=( -o "$FRAMES_DIR/frame_%06d.$FORMAT" )
+  [[ -n "$WIDTH" ]] && ARGS+=( --width "$WIDTH" )
+  [[ -n "$HEIGHT" ]] && ARGS+=( --height "$HEIGHT" )
+  [[ -n "$SHUTTER_US" ]] && ARGS+=( --shutter "$SHUTTER_US" )
+  [[ -n "$GAIN" ]] && ARGS+=( --gain "$GAIN" )
+fi
+
+# Start capture in background
+"$CAM" "${ARGS[@]}" >>"$LOG" 2>&1 &
+PID=$!
+echo "$PID" > "$PID_FILE"
+
+# Save session dir for debugging
+printf "%s\n" "$SESSION_DIR" > "$SESSION_FILE"
+
+# Write initial status so watcher can start analyzing immediately
+printf '{"state":"capturing","closed":false,"started_at":"%s"}\n' "$(date -Iseconds)" \
+  > "$SESSION_DIR/status.json"
+
+# IMPORTANT: print session dir to stdout for the trigger to capture
+printf "%s\n" "$SESSION_DIR"

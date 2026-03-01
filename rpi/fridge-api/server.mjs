@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SESSIONS_DIR = process.env.FRIDGE_SESSIONS_DIR || '/home/sixten/fridge-captures/sessions';
+const HISTORY_DIR  = process.env.FRIDGE_HISTORY_DIR  || '/home/sixten/fridge-captures/history';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), 'public');
 const MAX_DISK_BYTES = parseInt(process.env.FRIDGE_MAX_DISK_BYTES || String(20 * 1024 * 1024 * 1024), 10);
 
@@ -90,32 +91,36 @@ async function parseMeta(dir) {
 }
 
 async function parseStatus(dir) {
-  try {
-    return JSON.parse(await fs.readFile(path.join(dir, 'analysis', 'status.json'), 'utf8'));
-  } catch {
-    return null;
+  // Stills pipeline writes status.json at session root;
+  // video pipeline writes it under analysis/. Try both.
+  for (const rel of ['status.json', 'analysis/status.json']) {
+    try {
+      return JSON.parse(await fs.readFile(path.join(dir, rel), 'utf8'));
+    } catch {}
   }
+  return null;
 }
 
-async function listSessions() {
+async function listDir(baseDir) {
   let entries;
   try {
-    entries = await fs.readdir(SESSIONS_DIR, { withFileTypes: true });
+    entries = await fs.readdir(baseDir, { withFileTypes: true });
   } catch {
     return [];
   }
-
-  const ids = entries.filter(e => e.isDirectory()).map(e => e.name).sort();
-
+  const ids = entries.filter(e => e.isDirectory()).map(e => e.name).sort().reverse();
   return Promise.all(ids.map(async (id) => {
-    const dir = path.join(SESSIONS_DIR, id);
+    const dir = path.join(baseDir, id);
     const [status, meta] = await Promise.all([parseStatus(dir), parseMeta(dir)]);
     return { session_id: id, status, meta };
   }));
 }
 
-async function getSession(id) {
-  const dir = path.join(SESSIONS_DIR, id);
+async function listSessions() { return listDir(SESSIONS_DIR); }
+async function listHistory()  { return listDir(HISTORY_DIR); }
+
+async function getSessionFrom(baseDir, id) {
+  const dir = path.join(baseDir, id);
   try {
     await fs.stat(dir);
   } catch {
@@ -146,6 +151,9 @@ async function getSession(id) {
 
   return { session_id: id, status, meta, transactions, frames, frames_subdir: framesSubdir };
 }
+
+async function getSession(id)        { return getSessionFrom(SESSIONS_DIR, id); }
+async function getHistorySession(id) { return getSessionFrom(HISTORY_DIR, id); }
 
 // ---- disk usage ----
 
@@ -201,6 +209,35 @@ const server = http.createServer(async (req, res) => {
       for (const subdir of ['analysis/frames', 'frames']) {
         try {
           const data = await fs.readFile(path.join(SESSIONS_DIR, id, subdir, file));
+          return send(res, 200, data, { 'content-type': ct });
+        } catch {}
+      }
+      return notFound(res);
+    }
+
+    // GET /history
+    if (parts[0] === 'history' && parts.length === 1) {
+      return sendJson(res, 200, await listHistory());
+    }
+
+    // GET /history/:id
+    if (parts[0] === 'history' && parts.length === 2) {
+      const id = safeId(parts[1]);
+      if (!id) return notFound(res);
+      const session = await getHistorySession(id);
+      if (!session) return notFound(res);
+      return sendJson(res, 200, session);
+    }
+
+    // GET /history/:id/frames/:file
+    if (parts[0] === 'history' && parts.length === 4 && parts[2] === 'frames') {
+      const id = safeId(parts[1]);
+      const file = safeId(parts[3]);
+      if (!id || !file) return notFound(res);
+      const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
+      for (const subdir of ['analysis/frames', 'frames']) {
+        try {
+          const data = await fs.readFile(path.join(HISTORY_DIR, id, subdir, file));
           return send(res, 200, data, { 'content-type': ct });
         } catch {}
       }

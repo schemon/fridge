@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stop capture started by fridge-stills-start.
+# Usage: fridge-stills-stop /path/to/session_dir
+
+SESSION_DIR="${1:-}"
+[[ -n "$SESSION_DIR" ]] || { echo "Usage: $(basename "$0") /path/to/session_dir" >&2; exit 2; }
+
+PID_FILE="$SESSION_DIR/capture.pid"
+[[ -f "$PID_FILE" ]] || { echo "ERROR: pid file not found: $PID_FILE" >&2; exit 1; }
+
+PID=$(cat "$PID_FILE")
+
+if kill -0 "$PID" 2>/dev/null; then
+  # try graceful
+  kill "$PID" 2>/dev/null || true
+  sleep 0.5
+  # force if still alive
+  kill -9 "$PID" 2>/dev/null || true
+fi
+
+echo "stopped $PID"
+
+# Merge closed flag into existing status.json
+python3 -c "
+import json, sys
+path = sys.argv[1]
+try:
+    s = json.load(open(path))
+except Exception:
+    s = {}
+s.update({'closed': True, 'closed_at': '$(date -Iseconds)'})
+json.dump(s, open(path, 'w'))
+" "$SESSION_DIR/status.json"

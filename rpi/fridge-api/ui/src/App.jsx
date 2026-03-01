@@ -63,14 +63,14 @@ function SessionRow({ session, isSelected, onSelect }) {
   )
 }
 
-function FrameStrip({ sessionId, frames }) {
+function FrameStrip({ sessionId, frames, prefix = '/sessions' }) {
   if (!frames?.length) return <p style={muted}>No frames</p>
   return (
     <div style={{ display: 'flex', gap: 5, overflowX: 'auto', padding: '6px 0' }}>
       {frames.map(f => (
         <img
           key={f}
-          src={`/sessions/${sessionId}/frames/${f}`}
+          src={`${prefix}/${sessionId}/frames/${f}`}
           alt={f}
           style={{ height: 72, borderRadius: 3, flexShrink: 0, background: '#1a1a1a' }}
         />
@@ -93,18 +93,18 @@ function TxRow({ tx }) {
   )
 }
 
-function SessionDetail({ sessionId }) {
+function SessionDetail({ sessionId, prefix = '/sessions' }) {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
     setDetail(null)
-    fetch(`/sessions/${sessionId}`)
+    fetch(`${prefix}/${sessionId}`)
       .then(r => r.json())
       .then(d => { setDetail(d); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [sessionId])
+  }, [sessionId, prefix])
 
   if (loading) return <p style={muted}>Loading…</p>
   if (!detail)  return <p style={{ color: '#f44336' }}>Failed to load session</p>
@@ -131,7 +131,7 @@ function SessionDetail({ sessionId }) {
 
       <div style={{ marginBottom: 20 }}>
         <SectionLabel>Frames ({detail.frames.length})</SectionLabel>
-        <FrameStrip sessionId={sessionId} frames={detail.frames} />
+        <FrameStrip sessionId={sessionId} frames={detail.frames} prefix={prefix} />
       </div>
 
       <div>
@@ -153,12 +153,24 @@ function SectionLabel({ children }) {
   )
 }
 
+function SidebarSection({ label, children }) {
+  return (
+    <div>
+      <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, color: '#444', textTransform: 'uppercase', letterSpacing: 1 }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 const muted = { color: '#555', fontSize: 13 }
 
 export default function App() {
   const [sessions, setSessions] = useState([])
+  const [history, setHistory]   = useState([])
   const [disk, setDisk]         = useState(null)
-  const [selected, setSelected] = useState(null)
+  const [selected, setSelected] = useState(null)  // { session, prefix }
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
 
@@ -167,13 +179,18 @@ export default function App() {
     setError(null)
     Promise.all([
       fetch('/sessions').then(r => r.json()),
+      fetch('/history').then(r => r.json()),
       fetch('/disk').then(r => r.json()),
     ])
-      .then(([sessions, disk]) => { setSessions(sessions); setDisk(disk); setLoading(false) })
+      .then(([sessions, history, disk]) => {
+        setSessions(sessions); setHistory(history); setDisk(disk); setLoading(false)
+      })
       .catch(e => { setError(e.message); setLoading(false) })
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  const selectSession = (session, prefix) => setSelected({ session, prefix })
 
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
@@ -190,22 +207,41 @@ export default function App() {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loading && <p style={{ ...muted, padding: 14 }}>Loading…</p>}
           {error   && <p style={{ color: '#f44336', padding: 14, fontSize: 13 }}>{error}</p>}
-          {!loading && !error && sessions.length === 0 && <p style={{ ...muted, padding: 14 }}>No sessions</p>}
-          {sessions.map(s => (
-            <SessionRow
-              key={s.session_id}
-              session={s}
-              isSelected={selected?.session_id === s.session_id}
-              onSelect={setSelected}
-            />
-          ))}
+          {!loading && !error && (
+            <>
+              <SidebarSection label={`Pending (${sessions.length})`}>
+                {sessions.length === 0
+                  ? <p style={{ ...muted, padding: '4px 14px 10px' }}>Empty</p>
+                  : sessions.map(s => (
+                    <SessionRow
+                      key={s.session_id}
+                      session={s}
+                      isSelected={selected?.session.session_id === s.session_id && selected?.prefix === '/sessions'}
+                      onSelect={s => selectSession(s, '/sessions')}
+                    />
+                  ))}
+              </SidebarSection>
+              <SidebarSection label={`History (${history.length})`}>
+                {history.length === 0
+                  ? <p style={{ ...muted, padding: '4px 14px 10px' }}>Empty</p>
+                  : history.map(s => (
+                    <SessionRow
+                      key={s.session_id}
+                      session={s}
+                      isSelected={selected?.session.session_id === s.session_id && selected?.prefix === '/history'}
+                      onSelect={s => selectSession(s, '/history')}
+                    />
+                  ))}
+              </SidebarSection>
+            </>
+          )}
         </div>
       </div>
 
       {/* Detail pane */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         {selected
-          ? <SessionDetail sessionId={selected.session_id} />
+          ? <SessionDetail sessionId={selected.session.session_id} prefix={selected.prefix} />
           : <p style={muted}>Select a session</p>
         }
       </div>
