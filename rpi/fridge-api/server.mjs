@@ -102,6 +102,19 @@ async function parseStatus(dir) {
   return null;
 }
 
+async function parseTxSummary(dir) {
+  try {
+    const raw = await fs.readFile(path.join(dir, 'analysis', 'transactions.jsonl'), 'utf8');
+    const counts = {};
+    for (const line of raw.split('\n').filter(Boolean)) {
+      try { const { type } = JSON.parse(line); if (type) counts[type] = (counts[type] || 0) + 1; } catch {}
+    }
+    return counts;
+  } catch {
+    return {};
+  }
+}
+
 async function listDir(baseDir) {
   let entries;
   try {
@@ -112,8 +125,8 @@ async function listDir(baseDir) {
   const ids = entries.filter(e => e.isDirectory()).map(e => e.name).sort().reverse();
   return Promise.all(ids.map(async (id) => {
     const dir = path.join(baseDir, id);
-    const [status, meta] = await Promise.all([parseStatus(dir), parseMeta(dir)]);
-    return { session_id: id, status, meta };
+    const [status, meta, tx_summary] = await Promise.all([parseStatus(dir), parseMeta(dir), parseTxSummary(dir)]);
+    return { session_id: id, status, meta, tx_summary };
   }));
 }
 

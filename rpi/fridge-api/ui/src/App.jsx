@@ -1,5 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 
+function timeAgo(session_id) {
+  const m = session_id.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/)
+  if (!m) return session_id
+  const date = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])
+  const secs = Math.floor((Date.now() - date) / 1000)
+  if (secs < 60)   return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60)   return `${mins} minute${mins !== 1 ? 's' : ''} ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24)  return `${hours} hour${hours !== 1 ? 's' : ''} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days !== 1 ? 's' : ''} ago`
+}
+
 function fmtBytes(bytes) {
   if (bytes == null) return '?'
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
@@ -51,24 +65,37 @@ function Badge({ state }) {
   )
 }
 
+function TxSummary({ tx_summary }) {
+  const adds    = tx_summary?.ADD    || 0
+  const removes = tx_summary?.REMOVE || 0
+  if (!adds && !removes) return null
+  return (
+    <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+      {adds    > 0 && <span style={{ color: '#4caf50', fontSize: 11, fontWeight: 600 }}>[+{adds}]</span>}
+      {removes > 0 && <span style={{ color: '#f44336', fontSize: 11, fontWeight: 600 }}>[-{removes}]</span>}
+    </span>
+  )
+}
+
 function SessionRow({ session, isSelected, onSelect }) {
   return (
     <div
       onClick={() => onSelect(session)}
       style={{
-        padding: '10px 14px',
+        padding: '9px 14px',
         cursor: 'pointer',
         background: isSelected ? '#152030' : 'transparent',
         borderBottom: '1px solid #1e1e1e',
         display: 'flex',
         alignItems: 'center',
-        gap: 9,
+        justifyContent: 'space-between',
+        gap: 8,
       }}
     >
-      <Badge state={session.status?.state} />
-      <span style={{ fontFamily: 'monospace', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {session.session_id}
+      <span style={{ fontSize: 12, color: '#aaa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {timeAgo(session.session_id)}
       </span>
+      <TxSummary tx_summary={session.tx_summary} />
     </div>
   )
 }
@@ -198,13 +225,12 @@ function HistoryPage({ history, onSelect }) {
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'space-between',
               gap: 8,
             }}
           >
-            <Badge state={s.status?.state} />
-            <span style={{ fontFamily: 'monospace', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {s.session_id}
-            </span>
+            <span style={{ fontSize: 12, color: '#aaa' }}>{timeAgo(s.session_id)}</span>
+            <TxSummary tx_summary={s.tx_summary} />
           </div>
         ))}
       </div>
