@@ -127,13 +127,19 @@ async function getSession(id) {
     }).filter(Boolean);
   } catch {}
 
+  // Stills sessions store frames at session_dir/frames/
+  // Video sessions store frames at session_dir/analysis/frames/ (after analyze)
   let frames = [];
-  try {
-    const names = await fs.readdir(path.join(dir, 'analysis', 'frames'));
-    frames = names.filter(f => /\.(png|jpg)$/i.test(f)).sort();
-  } catch {}
+  let framesSubdir = 'analysis/frames';
+  for (const candidate of ['analysis/frames', 'frames']) {
+    try {
+      const names = await fs.readdir(path.join(dir, candidate));
+      const matches = names.filter(f => /\.(png|jpg)$/i.test(f)).sort();
+      if (matches.length > 0) { frames = matches; framesSubdir = candidate; break; }
+    } catch {}
+  }
 
-  return { session_id: id, status, meta, transactions, frames };
+  return { session_id: id, status, meta, transactions, frames, frames_subdir: framesSubdir };
 }
 
 function safeId(s) {
@@ -166,14 +172,14 @@ const server = http.createServer(async (req, res) => {
       const id = safeId(parts[1]);
       const file = safeId(parts[3]);
       if (!id || !file) return notFound(res);
-      const framePath = path.join(SESSIONS_DIR, id, 'analysis', 'frames', file);
-      try {
-        const data = await fs.readFile(framePath);
-        const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
-        return send(res, 200, data, { 'content-type': ct });
-      } catch {
-        return notFound(res);
+      const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
+      for (const subdir of ['analysis/frames', 'frames']) {
+        try {
+          const data = await fs.readFile(path.join(SESSIONS_DIR, id, subdir, file));
+          return send(res, 200, data, { 'content-type': ct });
+        } catch {}
       }
+      return notFound(res);
     }
 
     // Static files (React UI)
