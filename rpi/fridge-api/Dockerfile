@@ -9,6 +9,8 @@ RUN npm run build
 # Stage 2: runtime
 FROM node:22-alpine
 WORKDIR /app
+COPY package.json ./
+RUN npm install --omit=dev
 COPY server.mjs ./
 COPY --from=ui-builder /ui/dist ./public
 ENV HOST=0.0.0.0

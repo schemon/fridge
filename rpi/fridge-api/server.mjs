@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import sharp from 'sharp';
 
 const execFileAsync = promisify(execFile);
 
@@ -215,6 +216,42 @@ function safeId(s) {
   return /^[\w.-]+$/.test(s) ? s : null;
 }
 
+async function serveFrame(res, baseDir, id, file, w, h) {
+  for (const subdir of ['analysis/frames', 'frames']) {
+    const srcPath = path.join(baseDir, id, subdir, file);
+    try {
+      await fs.stat(srcPath);
+    } catch {
+      continue;
+    }
+
+    if (!w && !h) {
+      const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
+      return send(res, 200, await fs.readFile(srcPath), { 'content-type': ct });
+    }
+
+    // Check cache
+    const base = path.basename(file, path.extname(file));
+    const cacheFile = `${base}_${w || ''}x${h || ''}.jpg`;
+    const scaledDir = path.join(baseDir, id, subdir, 'scaled');
+    const cachePath = path.join(scaledDir, cacheFile);
+
+    try {
+      return send(res, 200, await fs.readFile(cachePath), { 'content-type': 'image/jpeg' });
+    } catch {}
+
+    // Scale, cache, serve
+    const buf = await sharp(srcPath)
+      .resize({ width: w || undefined, height: h || undefined, fit: 'cover' })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+    await fs.mkdir(scaledDir, { recursive: true });
+    fs.writeFile(cachePath, buf).catch(() => {}); // best-effort, don't block response
+    return send(res, 200, buf, { 'content-type': 'image/jpeg' });
+  }
+  return notFound(res);
+}
+
 // ---- request handler ----
 
 const server = http.createServer(async (req, res) => {
@@ -241,19 +278,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, session);
     }
 
-    // GET /sessions/:id/frames/:file
+    // GET /sessions/:id/frames/:file[?w=N&h=N]
     if (parts[0] === 'sessions' && parts.length === 4 && parts[2] === 'frames') {
       const id = safeId(parts[1]);
       const file = safeId(parts[3]);
       if (!id || !file) return notFound(res);
-      const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
-      for (const subdir of ['analysis/frames', 'frames']) {
-        try {
-          const data = await fs.readFile(path.join(SESSIONS_DIR, id, subdir, file));
-          return send(res, 200, data, { 'content-type': ct });
-        } catch {}
-      }
-      return notFound(res);
+      const w = parseInt(url.searchParams.get('w') || '0', 10) || null;
+      const h = parseInt(url.searchParams.get('h') || '0', 10) || null;
+      return serveFrame(res, SESSIONS_DIR, id, file, w, h);
     }
 
     // GET /history
@@ -270,19 +302,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, session);
     }
 
-    // GET /history/:id/frames/:file
+    // GET /history/:id/frames/:file[?w=N&h=N]
     if (parts[0] === 'history' && parts.length === 4 && parts[2] === 'frames') {
       const id = safeId(parts[1]);
       const file = safeId(parts[3]);
       if (!id || !file) return notFound(res);
-      const ct = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png';
-      for (const subdir of ['analysis/frames', 'frames']) {
-        try {
-          const data = await fs.readFile(path.join(HISTORY_DIR, id, subdir, file));
-          return send(res, 200, data, { 'content-type': ct });
-        } catch {}
-      }
-      return notFound(res);
+      const w = parseInt(url.searchParams.get('w') || '0', 10) || null;
+      const h = parseInt(url.searchParams.get('h') || '0', 10) || null;
+      return serveFrame(res, HISTORY_DIR, id, file, w, h);
     }
 
     // Static files (React UI)

@@ -13,5 +13,5 @@ services:
       FRIDGE_MAX_SESSIONS_BYTES: "5368709120"
       FRIDGE_MAX_HISTORY_BYTES: "21474836480"
     volumes:
-      - /home/sixten/fridge-captures/sessions:/data/sessions:ro
-      - /home/sixten/fridge-captures/history:/data/history:ro
+      - /home/sixten/fridge-captures/sessions:/data/sessions
+      - /home/sixten/fridge-captures/history:/data/history
