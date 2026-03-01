@@ -12,7 +12,8 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 const SESSIONS_DIR = process.env.FRIDGE_SESSIONS_DIR || '/home/sixten/fridge-captures/sessions';
 const HISTORY_DIR  = process.env.FRIDGE_HISTORY_DIR  || '/home/sixten/fridge-captures/history';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), 'public');
-const MAX_DISK_BYTES = parseInt(process.env.FRIDGE_MAX_DISK_BYTES || String(20 * 1024 * 1024 * 1024), 10);
+const MAX_SESSIONS_BYTES = parseInt(process.env.FRIDGE_MAX_SESSIONS_BYTES || String(5  * 1024 * 1024 * 1024), 10);
+const MAX_HISTORY_BYTES  = parseInt(process.env.FRIDGE_MAX_HISTORY_BYTES  || String(20 * 1024 * 1024 * 1024), 10);
 
 // ---- helpers ----
 
@@ -167,40 +168,32 @@ async function duBytes(dirPath) {
 }
 
 async function getStats() {
-  // Total disk usage via df on the sessions dir's filesystem
-  let total_used_bytes = null;
-  let total_max_bytes = MAX_DISK_BYTES;
-  try {
-    const { stdout } = await execFileAsync('df', ['-k', SESSIONS_DIR]);
-    const parts = stdout.trim().split('\n').pop().trim().split(/\s+/);
-    // df -k columns: Filesystem 1K-blocks Used Available Use% Mountpoint
-    total_max_bytes = parseInt(parts[1], 10) * 1024;
-    total_used_bytes = parseInt(parts[2], 10) * 1024;
-  } catch {}
-
   const [sessions_bytes, history_bytes] = await Promise.all([
     duBytes(SESSIONS_DIR),
     duBytes(HISTORY_DIR),
   ]);
+
+  const total_max = MAX_SESSIONS_BYTES + MAX_HISTORY_BYTES;
+  const total_used = (sessions_bytes ?? 0) + (history_bytes ?? 0);
 
   const pct = (used, max) =>
     used != null && max ? Math.round((used / max) * 1000) / 10 : null;
 
   return {
     disk_usage_total: {
-      used_bytes: total_used_bytes,
-      max_bytes: total_max_bytes,
-      used_pct: pct(total_used_bytes, total_max_bytes),
+      used_bytes: total_used,
+      max_bytes: total_max,
+      used_pct: pct(total_used, total_max),
     },
     disk_usage_sessions: {
       used_bytes: sessions_bytes,
-      max_bytes: total_max_bytes,
-      used_pct: pct(sessions_bytes, total_max_bytes),
+      max_bytes: MAX_SESSIONS_BYTES,
+      used_pct: pct(sessions_bytes, MAX_SESSIONS_BYTES),
     },
     disk_usage_history: {
       used_bytes: history_bytes,
-      max_bytes: total_max_bytes,
-      used_pct: pct(history_bytes, total_max_bytes),
+      max_bytes: MAX_HISTORY_BYTES,
+      used_pct: pct(history_bytes, MAX_HISTORY_BYTES),
     },
   };
 }
