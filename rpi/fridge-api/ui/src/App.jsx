@@ -105,12 +105,13 @@ function FrameGrid({ sessionId, frames, prefix = '/sessions' }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 5 }}>
       {frames.map(f => (
-        <img
-          key={f}
-          src={`${prefix}/${sessionId}/frames/${f}?w=240&h=180`}
-          alt={f}
-          style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: 3, background: '#1a1a1a', display: 'block' }}
-        />
+        <a key={f} href={`${prefix}/${sessionId}/frames/${f}`} target="_blank" rel="noreferrer">
+          <img
+            src={`${prefix}/${sessionId}/frames/${f}?w=240&h=180`}
+            alt={f}
+            style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: 3, background: '#1a1a1a', display: 'block' }}
+          />
+        </a>
       ))}
     </div>
   )
