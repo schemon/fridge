@@ -1,8 +1,10 @@
 import http from 'node:http';
 import { URL } from 'node:url';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
 
@@ -252,6 +254,50 @@ async function serveFrame(res, baseDir, id, file, w, h) {
   return notFound(res);
 }
 
+const GIF_FPS     = parseInt(process.env.GIF_FPS     || '8',   10);
+const GIF_WIDTH   = parseInt(process.env.GIF_WIDTH   || '320', 10);
+
+async function serveGif(res, baseDir, id) {
+  // Find frames subdir and frame list
+  let framesDir = null;
+  let frames = [];
+  for (const candidate of ['analysis/frames', 'frames']) {
+    try {
+      const names = await fs.readdir(path.join(baseDir, id, candidate));
+      const matches = names.filter(f => /\.(png|jpe?g)$/i.test(f)).sort();
+      if (matches.length > 0) { frames = matches; framesDir = path.join(baseDir, id, candidate); break; }
+    } catch {}
+  }
+  if (!framesDir || frames.length === 0) return notFound(res);
+
+  const scaledDir = path.join(framesDir, 'scaled');
+  const cachePath = path.join(scaledDir, 'animation.gif');
+
+  // Serve from cache
+  try {
+    return send(res, 200, await fs.readFile(cachePath), { 'content-type': 'image/gif' });
+  } catch {}
+
+  // Generate: write concat list → ffmpeg palette GIF
+  await fs.mkdir(scaledDir, { recursive: true });
+  const listPath = path.join(os.tmpdir(), `fridge_${randomBytes(4).toString('hex')}.txt`);
+  const duration = (1 / GIF_FPS).toFixed(4);
+  const listContent = frames.map(f => `file '${path.join(framesDir, f)}'\nduration ${duration}`).join('\n');
+  await fs.writeFile(listPath, listContent);
+
+  try {
+    await execFileAsync('ffmpeg', [
+      '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-vf', `scale=${GIF_WIDTH}:-2:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
+      '-y', cachePath,
+    ]);
+  } finally {
+    fs.unlink(listPath).catch(() => {});
+  }
+
+  return send(res, 200, await fs.readFile(cachePath), { 'content-type': 'image/gif' });
+}
+
 // ---- request handler ----
 
 const server = http.createServer(async (req, res) => {
@@ -278,6 +324,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, session);
     }
 
+    // GET /sessions/:id/gif
+    if (parts[0] === 'sessions' && parts.length === 3 && parts[2] === 'gif') {
+      const id = safeId(parts[1]);
+      if (!id) return notFound(res);
+      return serveGif(res, SESSIONS_DIR, id);
+    }
+
     // GET /sessions/:id/frames/:file[?w=N&h=N]
     if (parts[0] === 'sessions' && parts.length === 4 && parts[2] === 'frames') {
       const id = safeId(parts[1]);
@@ -300,6 +353,13 @@ const server = http.createServer(async (req, res) => {
       const session = await getHistorySession(id);
       if (!session) return notFound(res);
       return sendJson(res, 200, session);
+    }
+
+    // GET /history/:id/gif
+    if (parts[0] === 'history' && parts.length === 3 && parts[2] === 'gif') {
+      const id = safeId(parts[1]);
+      if (!id) return notFound(res);
+      return serveGif(res, HISTORY_DIR, id);
     }
 
     // GET /history/:id/frames/:file[?w=N&h=N]
