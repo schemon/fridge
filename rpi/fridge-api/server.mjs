@@ -2,11 +2,16 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SESSIONS_DIR = process.env.FRIDGE_SESSIONS_DIR || '/home/sixten/fridge-captures/sessions';
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), 'public');
+const MAX_DISK_BYTES = parseInt(process.env.FRIDGE_MAX_DISK_BYTES || String(20 * 1024 * 1024 * 1024), 10);
 
 // ---- helpers ----
 
@@ -142,6 +147,21 @@ async function getSession(id) {
   return { session_id: id, status, meta, transactions, frames, frames_subdir: framesSubdir };
 }
 
+// ---- disk usage ----
+
+async function getDiskUsage() {
+  try {
+    // du -sk: BusyBox-safe, returns 1K blocks
+    const { stdout } = await execFileAsync('du', ['-sk', SESSIONS_DIR]);
+    const kb = parseInt(stdout.trim().split(/\s+/)[0], 10);
+    const used_bytes = kb * 1024;
+    const used_pct = Math.round((used_bytes / MAX_DISK_BYTES) * 1000) / 10;
+    return { used_bytes, max_bytes: MAX_DISK_BYTES, used_pct };
+  } catch {
+    return { used_bytes: null, max_bytes: MAX_DISK_BYTES, used_pct: null };
+  }
+}
+
 function safeId(s) {
   return /^[\w.-]+$/.test(s) ? s : null;
 }
@@ -153,6 +173,11 @@ const server = http.createServer(async (req, res) => {
   const parts = url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean);
 
   try {
+    // GET /disk
+    if (parts[0] === 'disk' && parts.length === 1) {
+      return sendJson(res, 200, await getDiskUsage());
+    }
+
     // GET /sessions
     if (parts[0] === 'sessions' && parts.length === 1) {
       return sendJson(res, 200, await listSessions());

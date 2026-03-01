@@ -1,5 +1,30 @@
 import { useState, useEffect, useCallback } from 'react'
 
+function fmtBytes(bytes) {
+  if (bytes == null) return '?'
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
+  return `${(bytes / 1e3).toFixed(1)} KB`
+}
+
+function DiskUsage({ disk }) {
+  if (!disk) return null
+  const { used_bytes, max_bytes, used_pct } = disk
+  const pct = used_pct ?? 0
+  const barColor = pct >= 90 ? '#f44336' : pct >= 70 ? '#ff9800' : '#4caf50'
+  return (
+    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e1e1e' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 5 }}>
+        <span>sessions disk</span>
+        <span>{fmtBytes(used_bytes)} / {fmtBytes(max_bytes)} ({used_pct != null ? `${used_pct}%` : '?'})</span>
+      </div>
+      <div style={{ height: 4, background: '#1e1e1e', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: barColor, borderRadius: 2, transition: 'width 0.3s' }} />
+      </div>
+    </div>
+  )
+}
+
 const STATE_COLOR = {
   done:               '#4caf50',
   failed:             '#f44336',
@@ -132,17 +157,20 @@ const muted = { color: '#555', fontSize: 13 }
 
 export default function App() {
   const [sessions, setSessions] = useState([])
+  const [disk, setDisk]         = useState(null)
   const [selected, setSelected] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
     setError(null)
-    fetch('/sessions')
-      .then(r => r.json())
-      .then(data => { setSessions(data); setLoading(false) })
-      .catch(e  => { setError(e.message); setLoading(false) })
+    Promise.all([
+      fetch('/sessions').then(r => r.json()),
+      fetch('/disk').then(r => r.json()),
+    ])
+      .then(([sessions, disk]) => { setSessions(sessions); setDisk(disk); setLoading(false) })
+      .catch(e => { setError(e.message); setLoading(false) })
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
@@ -158,6 +186,7 @@ export default function App() {
             refresh
           </button>
         </div>
+        <DiskUsage disk={disk} />
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loading && <p style={{ ...muted, padding: 14 }}>Loading…</p>}
           {error   && <p style={{ color: '#f44336', padding: 14, fontSize: 13 }}>{error}</p>}
