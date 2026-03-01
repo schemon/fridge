@@ -148,11 +148,23 @@ function SessionDetail({ sessionId, prefix = '/sessions' }) {
   if (!detail)  return <p style={{ color: '#f44336' }}>Failed to load session</p>
 
   return (
-    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-        <Badge state={detail.status?.state} />
-        <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{detail.session_id}</span>
+    <div>
+      {/* Header: session id + time on left, GIF on right */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20, marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #1e1e1e' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <Badge state={detail.status?.state} />
+            <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{detail.session_id}</span>
+          </div>
+          <div style={{ fontSize: 12, color: '#555' }}>{timeAgo(detail.session_id)}</div>
+        </div>
+        {detail.frames.length > 0 && (
+          <img
+            src={`${prefix}/${sessionId}/gif`}
+            alt="session animation"
+            style={{ width: 200, borderRadius: 4, flexShrink: 0, background: '#1a1a1a' }}
+          />
+        )}
       </div>
 
       {Object.keys(detail.meta ?? {}).length > 0 && (
@@ -180,15 +192,6 @@ function SessionDetail({ sessionId, prefix = '/sessions' }) {
         <SectionLabel>Frames ({detail.frames.length})</SectionLabel>
         <FrameGrid sessionId={sessionId} frames={detail.frames} prefix={prefix} />
       </div>
-      </div>{/* end left column */}
-
-      {detail.frames.length > 0 && (
-        <img
-          src={`${prefix}/${sessionId}/gif`}
-          alt="session animation"
-          style={{ width: 200, borderRadius: 4, flexShrink: 0, background: '#1a1a1a' }}
-        />
-      )}
     </div>
   )
 }
