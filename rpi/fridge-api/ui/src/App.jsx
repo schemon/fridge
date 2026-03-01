@@ -7,20 +7,30 @@ function fmtBytes(bytes) {
   return `${(bytes / 1e3).toFixed(1)} KB`
 }
 
-function DiskUsage({ disk }) {
-  if (!disk) return null
-  const { used_bytes, max_bytes, used_pct } = disk
+function DiskBar({ label, used_bytes, max_bytes, used_pct }) {
   const pct = used_pct ?? 0
   const barColor = pct >= 90 ? '#f44336' : pct >= 70 ? '#ff9800' : '#4caf50'
   return (
-    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e1e1e' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 5 }}>
-        <span>sessions disk</span>
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 3 }}>
+        <span>{label}</span>
         <span>{fmtBytes(used_bytes)} / {fmtBytes(max_bytes)} ({used_pct != null ? `${used_pct}%` : '?'})</span>
       </div>
-      <div style={{ height: 4, background: '#1e1e1e', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{ height: 3, background: '#1e1e1e', borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: barColor, borderRadius: 2, transition: 'width 0.3s' }} />
       </div>
+    </div>
+  )
+}
+
+function DiskUsage({ stats }) {
+  if (!stats) return null
+  const { disk_usage_total, disk_usage_sessions, disk_usage_history } = stats
+  return (
+    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e1e1e' }}>
+      <DiskBar label="total"   {...disk_usage_total} />
+      <DiskBar label="pending" {...disk_usage_sessions} />
+      <DiskBar label="history" {...disk_usage_history} />
     </div>
   )
 }
@@ -169,7 +179,7 @@ const muted = { color: '#555', fontSize: 13 }
 export default function App() {
   const [sessions, setSessions] = useState([])
   const [history, setHistory]   = useState([])
-  const [disk, setDisk]         = useState(null)
+  const [stats, setStats]       = useState(null)
   const [selected, setSelected] = useState(null)  // { session, prefix }
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -180,10 +190,10 @@ export default function App() {
     Promise.all([
       fetch('/sessions').then(r => r.json()),
       fetch('/history').then(r => r.json()),
-      fetch('/disk').then(r => r.json()),
+      fetch('/stats').then(r => r.json()),
     ])
-      .then(([sessions, history, disk]) => {
-        setSessions(sessions); setHistory(history); setDisk(disk); setLoading(false)
+      .then(([sessions, history, stats]) => {
+        setSessions(sessions); setHistory(history); setStats(stats); setLoading(false)
       })
       .catch(e => { setError(e.message); setLoading(false) })
   }, [])
@@ -203,7 +213,7 @@ export default function App() {
             refresh
           </button>
         </div>
-        <DiskUsage disk={disk} />
+        <DiskUsage stats={stats} />
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loading && <p style={{ ...muted, padding: 14 }}>Loading…</p>}
           {error   && <p style={{ color: '#f44336', padding: 14, fontSize: 13 }}>{error}</p>}

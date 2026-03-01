@@ -155,19 +155,54 @@ async function getSessionFrom(baseDir, id) {
 async function getSession(id)        { return getSessionFrom(SESSIONS_DIR, id); }
 async function getHistorySession(id) { return getSessionFrom(HISTORY_DIR, id); }
 
-// ---- disk usage ----
+// ---- stats (disk usage) ----
 
-async function getDiskUsage() {
+async function duBytes(dirPath) {
   try {
-    // du -sk: BusyBox-safe, returns 1K blocks
-    const { stdout } = await execFileAsync('du', ['-sk', SESSIONS_DIR]);
-    const kb = parseInt(stdout.trim().split(/\s+/)[0], 10);
-    const used_bytes = kb * 1024;
-    const used_pct = Math.round((used_bytes / MAX_DISK_BYTES) * 1000) / 10;
-    return { used_bytes, max_bytes: MAX_DISK_BYTES, used_pct };
+    const { stdout } = await execFileAsync('du', ['-sk', dirPath]);
+    return parseInt(stdout.trim().split(/\s+/)[0], 10) * 1024;
   } catch {
-    return { used_bytes: null, max_bytes: MAX_DISK_BYTES, used_pct: null };
+    return null;
   }
+}
+
+async function getStats() {
+  // Total disk usage via df on the sessions dir's filesystem
+  let total_used_bytes = null;
+  let total_max_bytes = MAX_DISK_BYTES;
+  try {
+    const { stdout } = await execFileAsync('df', ['-k', SESSIONS_DIR]);
+    const parts = stdout.trim().split('\n').pop().trim().split(/\s+/);
+    // df -k columns: Filesystem 1K-blocks Used Available Use% Mountpoint
+    total_max_bytes = parseInt(parts[1], 10) * 1024;
+    total_used_bytes = parseInt(parts[2], 10) * 1024;
+  } catch {}
+
+  const [sessions_bytes, history_bytes] = await Promise.all([
+    duBytes(SESSIONS_DIR),
+    duBytes(HISTORY_DIR),
+  ]);
+
+  const pct = (used, max) =>
+    used != null && max ? Math.round((used / max) * 1000) / 10 : null;
+
+  return {
+    disk_usage_total: {
+      used_bytes: total_used_bytes,
+      max_bytes: total_max_bytes,
+      used_pct: pct(total_used_bytes, total_max_bytes),
+    },
+    disk_usage_sessions: {
+      used_bytes: sessions_bytes,
+      max_bytes: total_max_bytes,
+      used_pct: pct(sessions_bytes, total_max_bytes),
+    },
+    disk_usage_history: {
+      used_bytes: history_bytes,
+      max_bytes: total_max_bytes,
+      used_pct: pct(history_bytes, total_max_bytes),
+    },
+  };
 }
 
 function safeId(s) {
@@ -181,9 +216,9 @@ const server = http.createServer(async (req, res) => {
   const parts = url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean);
 
   try {
-    // GET /disk
-    if (parts[0] === 'disk' && parts.length === 1) {
-      return sendJson(res, 200, await getDiskUsage());
+    // GET /stats
+    if (parts[0] === 'stats' && parts.length === 1) {
+      return sendJson(res, 200, await getStats());
     }
 
     // GET /sessions
