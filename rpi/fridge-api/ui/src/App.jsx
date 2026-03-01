@@ -176,11 +176,46 @@ function SidebarSection({ label, children }) {
 
 const muted = { color: '#555', fontSize: 13 }
 
+const HISTORY_PREVIEW = 10
+
+function HistoryPage({ history, onSelect }) {
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <SectionLabel>All history ({history.length})</SectionLabel>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+        {history.map(s => (
+          <div
+            key={s.session_id}
+            onClick={() => onSelect(s)}
+            style={{
+              padding: '10px 12px',
+              background: '#111',
+              border: '1px solid #1e1e1e',
+              borderRadius: 4,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <Badge state={s.status?.state} />
+            <span style={{ fontFamily: 'monospace', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {s.session_id}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [sessions, setSessions] = useState([])
   const [history, setHistory]   = useState([])
   const [stats, setStats]       = useState(null)
-  const [selected, setSelected] = useState(null)  // { session, prefix }
+  const [rightPane, setRightPane] = useState(null)  // null | { type:'detail', session, prefix } | { type:'history' }
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
 
@@ -200,7 +235,10 @@ export default function App() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const selectSession = (session, prefix) => setSelected({ session, prefix })
+  const selectSession = (session, prefix) => setRightPane({ type: 'detail', session, prefix })
+  const showAllHistory = () => setRightPane({ type: 'history' })
+
+  const historyPreview = history.slice(0, HISTORY_PREVIEW)
 
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
@@ -226,7 +264,7 @@ export default function App() {
                     <SessionRow
                       key={s.session_id}
                       session={s}
-                      isSelected={selected?.session.session_id === s.session_id && selected?.prefix === '/sessions'}
+                      isSelected={rightPane?.type === 'detail' && rightPane.session.session_id === s.session_id && rightPane.prefix === '/sessions'}
                       onSelect={s => selectSession(s, '/sessions')}
                     />
                   ))}
@@ -234,26 +272,46 @@ export default function App() {
               <SidebarSection label={`History (${history.length})`}>
                 {history.length === 0
                   ? <p style={{ ...muted, padding: '4px 14px 10px' }}>Empty</p>
-                  : history.map(s => (
-                    <SessionRow
-                      key={s.session_id}
-                      session={s}
-                      isSelected={selected?.session.session_id === s.session_id && selected?.prefix === '/history'}
-                      onSelect={s => selectSession(s, '/history')}
-                    />
-                  ))}
+                  : <>
+                    {historyPreview.map(s => (
+                      <SessionRow
+                        key={s.session_id}
+                        session={s}
+                        isSelected={rightPane?.type === 'detail' && rightPane.session.session_id === s.session_id && rightPane.prefix === '/history'}
+                        onSelect={s => selectSession(s, '/history')}
+                      />
+                    ))}
+                    {history.length > HISTORY_PREVIEW && (
+                      <div
+                        onClick={showAllHistory}
+                        style={{
+                          padding: '8px 14px',
+                          fontSize: 11,
+                          color: rightPane?.type === 'history' ? '#90caf9' : '#555',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid #1e1e1e',
+                        }}
+                      >
+                        show all {history.length} →
+                      </div>
+                    )}
+                  </>
+                }
               </SidebarSection>
             </>
           )}
         </div>
       </div>
 
-      {/* Detail pane */}
+      {/* Right pane */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-        {selected
-          ? <SessionDetail sessionId={selected.session.session_id} prefix={selected.prefix} />
-          : <p style={muted}>Select a session</p>
-        }
+        {rightPane?.type === 'detail' && (
+          <SessionDetail sessionId={rightPane.session.session_id} prefix={rightPane.prefix} />
+        )}
+        {rightPane?.type === 'history' && (
+          <HistoryPage history={history} onSelect={s => selectSession(s, '/history')} />
+        )}
+        {!rightPane && <p style={muted}>Select a session</p>}
       </div>
     </div>
   )
