@@ -58,7 +58,7 @@ cd "$ROOT_DIR"
 
 deploy_rpi_web() {
   say "==> [rpi-web] syncing fridge-api..."
-  rsync "${RSYNC_FLAGS[@]}" "$LOCAL_API_DIR" "$HOST:$REMOTE_API_DIR/"
+  rsync "${RSYNC_FLAGS[@]}" --exclude='node_modules' "$LOCAL_API_DIR" "$HOST:$REMOTE_API_DIR/"
   if [[ "$DRY_RUN" == "1" ]]; then
     dryn "docker-compose up -d --build"
   else

@@ -6,6 +6,9 @@ import path from 'node:path';
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SESSIONS_DIR = process.env.FRIDGE_SESSIONS_DIR || '/home/sixten/fridge-captures/sessions';
+const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(process.cwd(), 'public');
+
+// ---- helpers ----
 
 function send(res, status, body, headers = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
@@ -25,6 +28,47 @@ function sendJson(res, status, obj) {
 function notFound(res) {
   sendJson(res, 404, { error: 'not_found' });
 }
+
+// ---- static file serving ----
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js':   'text/javascript',
+  '.css':  'text/css',
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg':  'image/svg+xml',
+  '.ico':  'image/x-icon',
+  '.json': 'application/json',
+}
+
+async function serveStatic(res, pathname) {
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { return notFound(res); }
+
+  // prevent path traversal
+  const rel = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+  const filePath = path.join(PUBLIC_DIR, rel);
+
+  let data;
+  try {
+    data = await fs.readFile(filePath);
+  } catch {
+    // SPA fallback
+    try {
+      data = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+      return send(res, 200, data, { 'content-type': 'text/html; charset=utf-8' });
+    } catch {
+      return notFound(res);
+    }
+  }
+
+  const ct = MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+  send(res, 200, data, { 'content-type': ct });
+}
+
+// ---- sessions data ----
 
 async function parseMeta(dir) {
   try {
@@ -92,21 +136,17 @@ async function getSession(id) {
   return { session_id: id, status, meta, transactions, frames };
 }
 
-// Validate path segments to prevent traversal
 function safeId(s) {
   return /^[\w.-]+$/.test(s) ? s : null;
 }
+
+// ---- request handler ----
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const parts = url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean);
 
   try {
-    // GET /
-    if (parts.length === 0) {
-      return sendJson(res, 200, { ok: true, sessions_dir: SESSIONS_DIR });
-    }
-
     // GET /sessions
     if (parts[0] === 'sessions' && parts.length === 1) {
       return sendJson(res, 200, await listSessions());
@@ -136,7 +176,8 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    notFound(res);
+    // Static files (React UI)
+    await serveStatic(res, url.pathname);
   } catch (err) {
     console.error(err);
     sendJson(res, 500, { error: 'internal_server_error' });
@@ -146,4 +187,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`fridge-api listening on http://${HOST}:${PORT}`);
   console.log(`sessions_dir: ${SESSIONS_DIR}`);
+  console.log(`public_dir:   ${PUBLIC_DIR}`);
 });
