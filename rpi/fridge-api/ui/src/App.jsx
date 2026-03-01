@@ -100,16 +100,16 @@ function SessionRow({ session, isSelected, onSelect }) {
   )
 }
 
-function FrameStrip({ sessionId, frames, prefix = '/sessions' }) {
+function FrameGrid({ sessionId, frames, prefix = '/sessions' }) {
   if (!frames?.length) return <p style={muted}>No frames</p>
   return (
-    <div style={{ display: 'flex', gap: 5, overflowX: 'auto', padding: '6px 0' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 5 }}>
       {frames.map(f => (
         <img
           key={f}
           src={`${prefix}/${sessionId}/frames/${f}`}
           alt={f}
-          style={{ height: 72, borderRadius: 3, flexShrink: 0, background: '#1a1a1a' }}
+          style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: 3, background: '#1a1a1a', display: 'block' }}
         />
       ))}
     </div>
@@ -167,16 +167,16 @@ function SessionDetail({ sessionId, prefix = '/sessions' }) {
       )}
 
       <div style={{ marginBottom: 20 }}>
-        <SectionLabel>Frames ({detail.frames.length})</SectionLabel>
-        <FrameStrip sessionId={sessionId} frames={detail.frames} prefix={prefix} />
-      </div>
-
-      <div>
         <SectionLabel>Transactions ({detail.transactions.length})</SectionLabel>
         {detail.transactions.length === 0
           ? <p style={muted}>None</p>
           : detail.transactions.map(tx => <TxRow key={tx.tx_id} tx={tx} />)
         }
+      </div>
+
+      <div>
+        <SectionLabel>Frames ({detail.frames.length})</SectionLabel>
+        <FrameGrid sessionId={sessionId} frames={detail.frames} prefix={prefix} />
       </div>
     </div>
   )
