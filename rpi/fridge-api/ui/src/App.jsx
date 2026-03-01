@@ -306,10 +306,20 @@ export default function App() {
       {/* Right pane */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         {rightPane?.type === 'detail' && (
-          <SessionDetail sessionId={rightPane.session.session_id} prefix={rightPane.prefix} />
+          <>
+            {rightPane.back && (
+              <button
+                onClick={() => setRightPane(rightPane.back)}
+                style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 12, padding: '0 0 16px 0', display: 'block' }}
+              >
+                ← back
+              </button>
+            )}
+            <SessionDetail sessionId={rightPane.session.session_id} prefix={rightPane.prefix} />
+          </>
         )}
         {rightPane?.type === 'history' && (
-          <HistoryPage history={history} onSelect={s => selectSession(s, '/history')} />
+          <HistoryPage history={history} onSelect={s => setRightPane({ type: 'detail', session: s, prefix: '/history', back: { type: 'history' } })} />
         )}
         {!rightPane && <p style={muted}>Select a session</p>}
       </div>
