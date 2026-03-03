@@ -1,53 +1,26 @@
-import './App.css'
-import {Hello} from "./components/Hello.tsx";
-import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
-import {HelloMe} from "./components/HelloMe.tsx";
-
-
+import { FridgeApp } from "./components/FridgeApp";
+import { setAuthToken } from "./fridge-api/client";
 
 function App() {
+  const auth = useAuth();
 
-    const auth = useAuth();
+  setAuthToken(auth.user?.id_token ?? undefined);
 
-    const signOutRedirect = () => {
+  if (auth.isLoading) {
+    return <div style={{ color: '#555', padding: 40 }}>Loading...</div>;
+  }
 
-        auth.removeUser();
+  if (!auth.isAuthenticated) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16 }}>
+        <span style={{ fontSize: 24, fontWeight: 700 }}>fridge</span>
+        <button onClick={() => auth.signinRedirect()}>Sign in</button>
+      </div>
+    );
+  }
 
-        const clientId = import.meta.env.VITE_AUTH_CLIENT_ID;
-        const cognitoDomain = import.meta.env.VITE_AUTH_DOMAIN;
-        const logoutUri = window.location.origin;
-        window.location.href = `${cognitoDomain}/logout?client_id=${clientId}&logout_uri=${encodeURIComponent(logoutUri)}`;
-    };
-
-    const queryClient = new QueryClient({
-        defaultOptions: {
-            queries: {
-                retry: false
-            }
-        }
-    });
-
-    if (auth.isAuthenticated) {
-        return (
-            <QueryClientProvider client={queryClient}>
-                <HelloMe/>
-                <button onClick={() => signOutRedirect()}>Sign out!</button>
-            </QueryClientProvider>
-        )
-    } else if (auth.isLoading) {
-        return <div>Loading...</div>;
-    } else {
-        return (
-            <QueryClientProvider client={queryClient}>
-                <div>
-                    <Hello/>
-                    <button onClick={() => auth.signinRedirect()}>Sign in</button>
-                    <button onClick={() => signOutRedirect()}>Sign out</button>
-                </div>
-            </QueryClientProvider>
-        );
-    }
+  return <FridgeApp />;
 }
 
-export default App
+export default App;

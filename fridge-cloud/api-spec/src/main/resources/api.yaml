@@ -1,46 +1,176 @@
 openapi: 3.0.2
 info:
-  title: Swagger Template Poc - OpenAPI 3.0
-  description: >-
-
-
-  version: 1.0.19
+  title: Fridge Cloud API - OpenAPI 3.0
+  description: Fridge session management API
+  version: 1.0.0
 
 servers:
   - url: /api/v1
 tags:
-  - name: Greetings
-    description: Hello world example
-paths:
-  /hello:
-    get:
-      tags:
-        - Greetings
-      responses:
-        '200':
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HelloResponse'
-  /hello/me:
-    get:
-      tags:
-        - Greetings
-      responses:
-        '200':
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HelloResponse'
+  - name: Sessions
+    description: Pending fridge sessions
+  - name: History
+    description: Completed fridge sessions
+  - name: Stats
+    description: System statistics
 
+paths:
+  /sessions:
+    get:
+      tags:
+        - Sessions
+      summary: List pending sessions
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionSummary'
+  /sessions/{id}:
+    get:
+      tags:
+        - Sessions
+      summary: Get pending session detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+  /history:
+    get:
+      tags:
+        - History
+      summary: List history sessions
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionSummary'
+  /history/{id}:
+    get:
+      tags:
+        - History
+      summary: Get history session detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+  /stats:
+    get:
+      tags:
+        - Stats
+      summary: Get system statistics
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
 
 components:
   schemas:
-    HelloResponse:
+    SessionSummary:
       type: object
       properties:
-        value:
+        session_id:
           type: string
-          example: world
+        status:
+          $ref: '#/components/schemas/Status'
+        meta:
+          type: object
+          additionalProperties:
+            type: string
+        tx_summary:
+          type: object
+          additionalProperties:
+            type: integer
+    SessionDetail:
+      type: object
+      properties:
+        session_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/Status'
+        meta:
+          type: object
+          additionalProperties:
+            type: string
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        frames:
+          type: array
+          items:
+            type: string
+        frames_subdir:
+          type: string
+    Status:
+      type: object
+      properties:
+        state:
+          type: string
+    Transaction:
+      type: object
+      properties:
+        tx_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - ADD
+            - REMOVE
+        item:
+          $ref: '#/components/schemas/Item'
+        confidence:
+          type: number
+    Item:
+      type: object
+      properties:
+        label:
+          type: string
+    DiskUsage:
+      type: object
+      properties:
+        used_bytes:
+          type: integer
+          format: int64
+        max_bytes:
+          type: integer
+          format: int64
+        used_pct:
+          type: number
+    Stats:
+      type: object
+      properties:
+        disk_usage_total:
+          $ref: '#/components/schemas/DiskUsage'
+        disk_usage_sessions:
+          $ref: '#/components/schemas/DiskUsage'
+        disk_usage_history:
+          $ref: '#/components/schemas/DiskUsage'
