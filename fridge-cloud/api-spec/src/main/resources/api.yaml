@@ -13,6 +13,8 @@ tags:
     description: Completed fridge sessions
   - name: Stats
     description: System statistics
+  - name: Devices
+    description: Device management
 
 paths:
   /sessions:
@@ -91,6 +93,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Stats'
+  /admin/devices:
+    post:
+      tags:
+        - Devices
+      summary: Register a new device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistrationRequest'
+      responses:
+        '200':
+          description: Device registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceRegistrationResponse'
 
 components:
   schemas:
@@ -174,3 +194,24 @@ components:
           $ref: '#/components/schemas/DiskUsage'
         disk_usage_history:
           $ref: '#/components/schemas/DiskUsage'
+    DeviceRegistrationRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+    DeviceRegistrationResponse:
+      type: object
+      properties:
+        device_id:
+          type: string
+        name:
+          type: string
+        api_key:
+          type: string
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

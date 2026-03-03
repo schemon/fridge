@@ -8,8 +8,11 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
+import se.sprout.poc_template_backend.repository.DeviceRepository;
+import se.sprout.poc_template_backend.security.ApiKeyAuthenticationFilter;
 import se.sprout.poc_template_backend.security.ExtendedPrincipalJwtAuthenticationConverter;
 
 import java.util.List;
@@ -18,9 +21,16 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    private final DeviceRepository deviceRepository;
+
+    public SecurityConfig(DeviceRepository deviceRepository) {
+        this.deviceRepository = deviceRepository;
+    }
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
+            .addFilterBefore(new ApiKeyAuthenticationFilter(deviceRepository), BearerTokenAuthenticationFilter.class)
             .csrf(AbstractHttpConfigurer::disable)
             .cors(cors -> cors.configurationSource(request -> {
                 CorsConfiguration configuration = new CorsConfiguration();

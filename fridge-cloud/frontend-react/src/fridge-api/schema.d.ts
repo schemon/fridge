@@ -188,6 +188,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register a new device */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DeviceRegistrationRequest"];
+                };
+            };
+            responses: {
+                /** @description Device registered successfully */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeviceRegistrationResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -236,6 +276,14 @@ export interface components {
             disk_usage_total?: components["schemas"]["DiskUsage"];
             disk_usage_sessions?: components["schemas"]["DiskUsage"];
             disk_usage_history?: components["schemas"]["DiskUsage"];
+        };
+        DeviceRegistrationRequest: {
+            name: string;
+        };
+        DeviceRegistrationResponse: {
+            device_id?: string;
+            name?: string;
+            api_key?: string;
         };
     };
     responses: never;
