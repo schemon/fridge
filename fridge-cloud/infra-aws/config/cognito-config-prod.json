@@ -1,0 +1,5 @@
+{
+  "issuerUri": "https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_om9XU0DUp",
+  "clientId": "3j2s1881evjhgs6a84hge468j4",
+  "cognitoDomain": "https://prod-fridge-cloud.auth.eu-north-1.amazoncognito.com"
+}

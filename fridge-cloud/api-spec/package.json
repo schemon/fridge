@@ -1,0 +1,11 @@
+{
+  "name": "api-spec",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.4"
+  }
+}

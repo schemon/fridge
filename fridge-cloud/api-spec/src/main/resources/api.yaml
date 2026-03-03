@@ -1,0 +1,46 @@
+openapi: 3.0.2
+info:
+  title: Swagger Template Poc - OpenAPI 3.0
+  description: >-
+
+
+  version: 1.0.19
+
+servers:
+  - url: /api/v1
+tags:
+  - name: Greetings
+    description: Hello world example
+paths:
+  /hello:
+    get:
+      tags:
+        - Greetings
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HelloResponse'
+  /hello/me:
+    get:
+      tags:
+        - Greetings
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HelloResponse'
+
+
+components:
+  schemas:
+    HelloResponse:
+      type: object
+      properties:
+        value:
+          type: string
+          example: world

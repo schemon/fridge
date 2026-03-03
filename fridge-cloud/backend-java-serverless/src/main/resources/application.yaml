@@ -1,0 +1,25 @@
+spring:
+  application.name: backend
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/poc
+    username: poc
+    password: poc
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${COGNITO_ISSUER_URI:https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_PLACEHOLDER}
+
+logging:
+  level:
+    root: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

@@ -1,0 +1,3 @@
+{
+  "ssm:account=760557952941:parameterName=/prod-fridge-cloud/cognito/issuer-uri:region=eu-north-1": "https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_om9XU0DUp"
+}

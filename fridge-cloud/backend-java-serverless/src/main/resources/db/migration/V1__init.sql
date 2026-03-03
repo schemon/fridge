@@ -1,0 +1,5 @@
+CREATE TABLE example (
+     key VARCHAR PRIMARY KEY,
+     value VARCHAR,
+     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

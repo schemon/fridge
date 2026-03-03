@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>se.sprout</groupId>
+        <artifactId>api-spec</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+
+    <name>api-spec</name>
+    <description>Open API Spec</description>
+
+    <properties>
+        <openapi-plugin.version>7.10.0</openapi-plugin.version>
+        <maven-compile-plugin.version>3.8.1</maven-compile-plugin.version>
+        <frontend-plugin.version>1.15.1</frontend-plugin.version>
+        <jdk.version>21</jdk.version>
+        <swagger-annotations-version>1.6.2</swagger-annotations-version>
+        <jakarta-annotation-version>3.0.0</jakarta-annotation-version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.openapitools</groupId>
+            <artifactId>jackson-databind-nullable</artifactId>
+            <version>0.2.6</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.18.2</version>
+        </dependency>
+        <dependency>
+            <groupId>io.swagger</groupId>
+            <artifactId>swagger-annotations</artifactId>
+            <version>${swagger-annotations-version}</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>${jakarta-annotation-version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.openapitools</groupId>
+                    <artifactId>openapi-generator-maven-plugin</artifactId>
+                    <version>${openapi-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compile-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <groupId>org.openapitools</groupId>
+                <artifactId>openapi-generator-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>backend-test-client</id>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>src/main/resources/api.yaml</inputSpec>
+                            <generatorName>java</generatorName>
+                            <generateApiTests>false</generateApiTests>
+                            <generateModelTests>false</generateModelTests>
+                            <library>native</library>
+                            <modelPackage>${project.groupId}.model</modelPackage>
+                            <apiPackage>${project.groupId}.api</apiPackage>
+                            <configOptions>
+                                <useJakartaEe>true</useJakartaEe>
+                                <interfaceOnly>true</interfaceOnly>
+                                <!--<hideGenerationTimestamp>true</hideGenerationTimestamp>
+                                <dateLibrary>java8</dateLibrary>-->
+                            </configOptions>
+                        </configuration>
+                    </execution>
+
+                </executions>
+            </plugin>
+
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <release>${jdk.version}</release>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

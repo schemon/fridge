@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+
+  postgres:
+    image: postgres:17.2
+    restart: always
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: poc
+      POSTGRES_DB: poc
+    ports:
+      - "5432:5432"
